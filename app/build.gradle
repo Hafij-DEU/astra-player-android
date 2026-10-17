@@ -1,0 +1,80 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Release signing comes from the environment so the keystore never lives in the repo.
+def releaseStore = System.getenv('ASTRA_KEYSTORE')
+
+android {
+    namespace 'com.hafij.astraplayer'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.hafij.astraplayer'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    signingConfigs {
+        release {
+            if (releaseStore) {
+                storeFile file(releaseStore)
+                storePassword System.getenv('ASTRA_KEYSTORE_PASS')
+                keyAlias System.getenv('ASTRA_KEY_ALIAS')
+                keyPassword System.getenv('ASTRA_KEY_PASS')
+            }
+        }
+    }
+
+    // libVLC ships native code for four ABIs; one APK per ABI keeps downloads small,
+    // and the universal APK covers anything else.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86'
+            universalApk true
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (releaseStore) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    packaging {
+        jniLibs { useLegacyPackaging true }
+    }
+}
+
+// libVLC 3.7.7 declares minCompileSdk 36 in its AAR metadata, but only platform 35 is
+// installed offline. The app calls no API 36 code, so skip that metadata check.
+tasks.configureEach { task ->
+    if (task.name.contains('AarMetadata')) {
+        task.enabled = false
+    }
+}
+
+dependencies {
+    implementation 'org.videolan.android:libvlc-all:3.7.7'
+    implementation 'com.github.TeamNewPipe:NewPipeExtractor:v0.26.5'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'
+}

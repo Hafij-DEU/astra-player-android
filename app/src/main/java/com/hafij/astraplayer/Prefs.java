@@ -1,0 +1,116 @@
+package com.hafij.astraplayer;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+
+import org.json.JSONArray;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+/** Settings, resume positions and stream history. */
+public final class Prefs {
+    // Subtitle sizes map to libVLC's --freetype-rel-fontsize (a larger number is a smaller font).
+    public static final String[] SUB_SIZE_NAMES = {"Small", "Normal", "Large", "Larger"};
+    public static final int[] SUB_SIZE_VALUES = {20, 16, 12, 9};
+    public static final String[] SUB_COLOR_NAMES = {"White", "Yellow", "Amber", "Cyan", "Green"};
+    public static final int[] SUB_COLOR_VALUES = {0xFFFFFF, 0xFFFF55, 0xF2A516, 0x66E0FF, 0x7CFC8A};
+    public static final String[] SUB_BG_NAMES = {"None", "Shadow box", "Solid box"};
+    public static final int[] SUB_BG_VALUES = {0, 128, 230};
+    public static final String[] YT_QUALITY_NAMES = {"360p", "480p", "720p", "1080p", "1440p", "2160p"};
+    public static final int[] YT_QUALITY_VALUES = {360, 480, 720, 1080, 1440, 2160};
+
+    private static final int MAX_HISTORY = 30;
+    private static final int MAX_RESUME = 400;
+
+    private final SharedPreferences sp;
+    private final SharedPreferences resume;
+
+    public Prefs(Context c) {
+        sp = c.getSharedPreferences("settings", Context.MODE_PRIVATE);
+        resume = c.getSharedPreferences("resume", Context.MODE_PRIVATE);
+    }
+
+    public int subSize() { return sp.getInt("sub_size", 1); }
+    public int subColor() { return sp.getInt("sub_color", 0); }
+    public int subBg() { return sp.getInt("sub_bg", 0); }
+    public boolean subBold() { return sp.getBoolean("sub_bold", false); }
+
+    public void setSubStyle(int size, int color, int bg, boolean bold) {
+        sp.edit().putInt("sub_size", size).putInt("sub_color", color).putInt("sub_bg", bg)
+                .putBoolean("sub_bold", bold).apply();
+    }
+
+    public boolean backgroundPlay() { return sp.getBoolean("background_play", true); }
+    public void setBackgroundPlay(boolean v) { sp.edit().putBoolean("background_play", v).apply(); }
+
+    public boolean hwDecoding() { return sp.getBoolean("hw_decoding", true); }
+    public void setHwDecoding(boolean v) { sp.edit().putBoolean("hw_decoding", v).apply(); }
+
+    public boolean resumeEnabled() { return sp.getBoolean("resume", true); }
+    public void setResumeEnabled(boolean v) { sp.edit().putBoolean("resume", v).apply(); }
+
+    public int ytQuality() { return sp.getInt("yt_quality", 1080); }
+    public void setYtQuality(int v) { sp.edit().putInt("yt_quality", v).apply(); }
+
+    public int repeatMode() { return sp.getInt("repeat", PlaybackService.REPEAT_ALL); }
+    public void setRepeatMode(int v) { sp.edit().putInt("repeat", v).apply(); }
+
+    public boolean shuffle() { return sp.getBoolean("shuffle", false); }
+    public void setShuffle(boolean v) { sp.edit().putBoolean("shuffle", v).apply(); }
+
+    public boolean fontsReady() { return sp.getBoolean("fonts_ready", false); }
+    public void setFontsReady() { sp.edit().putBoolean("fonts_ready", true).apply(); }
+
+    public String lastFolder() { return sp.getString("last_folder", null); }
+    public void setLastFolder(String path) { sp.edit().putString("last_folder", path).apply(); }
+
+    public long resumePosition(String key) {
+        return key == null ? 0 : resume.getLong(key, 0);
+    }
+
+    public void saveResume(String key, long ms) {
+        if (key == null) return;
+        SharedPreferences.Editor e = resume.edit();
+        if (ms <= 0) {
+            e.remove(key);
+        } else {
+            e.putLong(key, ms);
+            // Keep the store bounded: drop arbitrary old entries once it grows large.
+            Map<String, ?> all = resume.getAll();
+            if (all.size() > MAX_RESUME) {
+                int drop = all.size() - MAX_RESUME;
+                for (String k : all.keySet()) {
+                    if (drop-- <= 0) break;
+                    if (!k.equals(key)) e.remove(k);
+                }
+            }
+        }
+        e.apply();
+    }
+
+    public List<String> history() {
+        List<String> out = new ArrayList<>();
+        try {
+            JSONArray a = new JSONArray(sp.getString("stream_history", "[]"));
+            for (int i = 0; i < a.length(); i++) out.add(a.getString(i));
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    public void addHistory(String url) {
+        List<String> h = history();
+        h.remove(url);
+        h.add(0, url);
+        while (h.size() > MAX_HISTORY) h.remove(h.size() - 1);
+        sp.edit().putString("stream_history", new JSONArray(h).toString()).apply();
+    }
+
+    public void removeHistory(String url) {
+        List<String> h = history();
+        h.remove(url);
+        sp.edit().putString("stream_history", new JSONArray(h).toString()).apply();
+    }
+}
