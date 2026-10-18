@@ -13,4 +13,13 @@
     <color name="divider">#D8D8DF</color>
     <color name="amber_dim">#33F2A516</color>
     <color name="controls_bg">#8C0E0E11</color>
+    <!-- Colourful palette for icons, tabs and chips. -->
+    <color name="c_violet">#7C4DFF</color>
+    <color name="c_teal">#00897B</color>
+    <color name="c_rose">#E0446A</color>
+    <color name="c_blue">#2D6CC0</color>
+    <color name="c_green">#2E9D4E</color>
+    <color name="c_orange">#E8710A</color>
+    <color name="c_pink">#C2185B</color>
+    <color name="c_indigo">#3F51B5</color>
 </resources>

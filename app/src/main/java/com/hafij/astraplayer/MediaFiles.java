@@ -43,6 +43,9 @@ public final class MediaFiles {
         String e = ext(name);
         return VIDEO.contains(e) || AUDIO.contains(e) || PLAYLIST.contains(e);
     }
+    public static List<String> videoExtensions() { return new ArrayList<>(new java.util.TreeSet<>(VIDEO)); }
+    public static List<String> audioExtensions() { return new ArrayList<>(new java.util.TreeSet<>(AUDIO)); }
+
     public static boolean isSubtitle(String name) { return SUBTITLE.contains(ext(name)); }
 
     private static String base(String name) {
@@ -52,25 +55,120 @@ public final class MediaFiles {
 
     /** Sub-folders and playable files of a folder, folders first, both sorted by name. */
     public static List<File> list(File dir) {
+        return list(dir, Filter.NONE, Prefs.SORT_NAME, false);
+    }
+
+    /** Folders first, then playable files, each group sorted as asked. */
+    public static List<File> list(File dir, Filter filter, int sortMode, boolean descending) {
         List<File> dirs = new ArrayList<>();
         List<File> files = new ArrayList<>();
         File[] all = dir.listFiles();
         if (all == null) return dirs;
         for (File f : all) {
-            if (f.getName().startsWith(".")) continue;
-            if (f.isDirectory()) dirs.add(f);
-            else if (isPlayable(f.getName())) files.add(f);
+            if (f.isDirectory()) {
+                if (filter.allowDir(f)) dirs.add(f);
+            } else if (isPlayable(f.getName()) && filter.allowFile(f)) {
+                files.add(f);
+            }
         }
-        dirs.sort((a, b) -> a.getName().compareToIgnoreCase(b.getName()));
-        files.sort((a, b) -> naturalCompare(a.getName(), b.getName()));
+        sortFiles(dirs, sortMode == Prefs.SORT_SIZE ? Prefs.SORT_NAME : sortMode, descending);
+        sortFiles(files, sortMode, descending);
         dirs.addAll(files);
         return dirs;
     }
 
     /** Playable files directly inside a folder, in natural name order (for play-folder). */
     public static List<MediaItem> folderItems(File dir) {
+        return folderItems(dir, Filter.NONE);
+    }
+
+    public static List<MediaItem> folderItems(File dir, Filter filter) {
         List<MediaItem> out = new ArrayList<>();
-        for (File f : list(dir)) if (f.isFile()) out.add(MediaItem.file(f));
+        for (File f : list(dir, filter, Prefs.SORT_NAME, false)) if (f.isFile()) out.add(MediaItem.file(f));
+        return out;
+    }
+
+    /** What the Files tab may show: hidden paths and excluded extensions are left out. */
+    public static final class Filter {
+        public static final Filter NONE = new Filter(new HashSet<>(), new HashSet<>(), true);
+        final Set<String> hidden;
+        final Set<String> excluded;
+        final boolean showHidden;
+
+        public Filter(Set<String> hidden, Set<String> excluded, boolean showHidden) {
+            this.hidden = hidden;
+            this.excluded = excluded;
+            this.showHidden = showHidden;
+        }
+
+        public boolean isHidden(File f) {
+            return hidden.contains(f.getAbsolutePath());
+        }
+
+        public boolean allowDir(File dir) {
+            if (dir.getName().startsWith(".")) return false;
+            return showHidden || !isHidden(dir);
+        }
+
+        public boolean allowFile(File f) {
+            String name = f.getName();
+            if (name.startsWith(".")) return false;
+            if (excluded.contains(ext(name))) return false;
+            return showHidden || !isHidden(f);
+        }
+
+        /** True when the folder or any parent folder is hidden. */
+        public boolean insideHidden(File f) {
+            if (showHidden || hidden.isEmpty()) return false;
+            for (File p = f; p != null; p = p.getParentFile()) if (hidden.contains(p.getAbsolutePath())) return true;
+            return false;
+        }
+
+        /** Stable text that changes whenever the result of a scan could change. */
+        public String key() {
+            return showHidden + "|" + new java.util.TreeSet<>(hidden) + "|" + new java.util.TreeSet<>(excluded);
+        }
+    }
+
+    // ---- sorting ----------------------------------------------------------------------
+
+    public static void sortFiles(List<File> files, int mode, boolean descending) {
+        java.util.Comparator<File> byName = (a, b) -> {
+            int c = naturalCompare(a.getName(), b.getName());
+            return c != 0 ? c : a.getAbsolutePath().compareTo(b.getAbsolutePath());
+        };
+        java.util.Comparator<File> cmp;
+        if (mode == Prefs.SORT_DATE) cmp = java.util.Comparator.comparingLong(File::lastModified).thenComparing(byName);
+        else if (mode == Prefs.SORT_SIZE) cmp = java.util.Comparator.comparingLong(File::length).thenComparing(byName);
+        else cmp = byName;
+        files.sort(descending ? cmp.reversed() : cmp);
+    }
+
+    public static void sortFolders(List<VideoFolder> folders, int mode, boolean descending) {
+        java.util.Comparator<VideoFolder> byName = (a, b) -> {
+            int c = naturalCompare(a.dir.getName(), b.dir.getName());
+            return c != 0 ? c : a.dir.getAbsolutePath().compareTo(b.dir.getAbsolutePath());
+        };
+        java.util.Comparator<VideoFolder> cmp;
+        if (mode == Prefs.SORT_DATE) cmp = java.util.Comparator.<VideoFolder>comparingLong(f -> f.dir.lastModified()).thenComparing(byName);
+        else if (mode == Prefs.SORT_SIZE) cmp = java.util.Comparator.<VideoFolder>comparingInt(f -> f.videos).thenComparing(byName);
+        else cmp = byName;
+        folders.sort(descending ? cmp.reversed() : cmp);
+    }
+
+    /** Subtitle files that belong to one video by name (Movie.srt, Movie.en.srt), for rename/delete. */
+    public static List<File> matchingSubtitles(File video) {
+        List<File> out = new ArrayList<>();
+        File dir = video.getParentFile();
+        if (dir == null) return out;
+        String base = base(video.getName());
+        File[] all = dir.listFiles();
+        if (all == null) return out;
+        for (File f : all) {
+            if (!f.isFile() || !isSubtitle(f.getName())) continue;
+            String b = base(f.getName());
+            if (b.equals(base) || b.startsWith(base + ".")) out.add(f);
+        }
         return out;
     }
 
@@ -91,6 +189,15 @@ public final class MediaFiles {
      * saves videos there). Canonical paths guard against symlink loops.
      */
     public static List<VideoFolder> findVideoFolders(List<File> roots) {
+        return findVideoFolders(roots, Filter.NONE);
+    }
+
+    public static List<VideoFolder> findVideoFolders(List<File> roots, Filter filter) {
+        return findMediaFolders(roots, filter, false);
+    }
+
+    /** Folders that directly hold videos, or songs when {@code audio} is true. */
+    public static List<VideoFolder> findMediaFolders(List<File> roots, Filter filter, boolean audio) {
         List<VideoFolder> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         ArrayDeque<File> stack = new ArrayDeque<>();
@@ -112,9 +219,9 @@ public final class MediaFiles {
                 String name = f.getName();
                 if (name.startsWith(".")) continue;
                 if (f.isDirectory()) {
-                    if (isSkippedAndroidDir(dir, name)) continue;
+                    if (isSkippedAndroidDir(dir, name) || !filter.allowDir(f)) continue;
                     subdirs.add(f);
-                } else if (isVideo(name)) {
+                } else if ((audio ? isAudio(name) : isVideo(name)) && filter.allowFile(f)) {
                     videos++;
                 }
             }
@@ -163,19 +270,32 @@ public final class MediaFiles {
 
     /** Videos directly inside a folder, in natural name order. */
     public static List<File> videoFiles(File dir) {
+        return videoFiles(dir, Filter.NONE);
+    }
+
+    public static List<File> videoFiles(File dir, Filter filter) {
+        return mediaFiles(dir, filter, false);
+    }
+
+    /** Videos (or songs) directly inside a folder, in natural name order. */
+    public static List<File> mediaFiles(File dir, Filter filter, boolean audio) {
         List<File> out = new ArrayList<>();
         File[] all = dir.listFiles();
         if (all == null) return out;
         for (File f : all) {
-            if (f.isFile() && !f.getName().startsWith(".") && isVideo(f.getName())) out.add(f);
+            if (f.isFile() && (audio ? isAudio(f.getName()) : isVideo(f.getName())) && filter.allowFile(f)) out.add(f);
         }
         out.sort((a, b) -> naturalCompare(a.getName(), b.getName()));
         return out;
     }
 
     public static List<MediaItem> videoItems(File dir) {
+        return videoItems(dir, Filter.NONE);
+    }
+
+    public static List<MediaItem> videoItems(File dir, Filter filter) {
         List<MediaItem> out = new ArrayList<>();
-        for (File f : videoFiles(dir)) out.add(MediaItem.file(f));
+        for (File f : videoFiles(dir, filter)) out.add(MediaItem.file(f));
         return out;
     }
 

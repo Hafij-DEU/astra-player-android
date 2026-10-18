@@ -15,11 +15,13 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -55,6 +57,20 @@ public final class Ui {
         a.applyOverrideConfiguration(c);
     }
 
+    private static final int[] PALETTE = {R.color.c_violet, R.color.c_teal, R.color.c_rose, R.color.c_blue,
+            R.color.c_green, R.color.c_orange, R.color.c_pink, R.color.c_indigo};
+
+    /** A stable colour from the palette for a name (folders keep their colour). */
+    public static int paletteColor(Context c, String key) {
+        int h = key == null ? 0 : key.hashCode();
+        return c.getColor(PALETTE[Math.floorMod(h, PALETTE.length)]);
+    }
+
+    /** The colour with a low alpha, for soft chip and icon backgrounds. */
+    public static int soft(int color) {
+        return (color & 0x00FFFFFF) | 0x30000000;
+    }
+
     public static int dp(Context c, float v) {
         return Math.round(v * c.getResources().getDisplayMetrics().density);
     }
@@ -64,7 +80,29 @@ public final class Ui {
     }
 
     public static AlertDialog.Builder dialog(Context c) {
-        return new AlertDialog.Builder(c, R.style.Theme_Astra_Dialog);
+        return new Builder(c);
+    }
+
+    /** Dialogs open at the bottom of the screen in one-hand mode, within thumb reach. */
+    private static final class Builder extends AlertDialog.Builder {
+        private final boolean bottom;
+
+        Builder(Context c) {
+            super(c, R.style.Theme_Astra_Dialog);
+            bottom = new Prefs(c).oneHand() && !(c instanceof PlayerActivity);
+        }
+
+        @Override
+        public AlertDialog create() {
+            AlertDialog d = super.create();
+            if (bottom && d.getWindow() != null) {
+                d.getWindow().setGravity(Gravity.BOTTOM);
+                android.view.WindowManager.LayoutParams lp = d.getWindow().getAttributes();
+                lp.y = dp(getContext(), 12);
+                d.getWindow().setAttributes(lp);
+            }
+            return d;
+        }
     }
 
     public static TextView text(Context c, String s, float sp, int color) {
@@ -176,10 +214,46 @@ public final class Ui {
             addView(texts, lp);
             trailing = text(c, "", 12, c.getColor(R.color.text_dim));
             addView(trailing);
+            more = new ImageButton(c);
+            more.setImageResource(R.drawable.ic_more);
+            more.setBackgroundResource(R.drawable.bg_round_btn);
+            more.setContentDescription("More options");
+            more.setPadding(dp(c, 8), dp(c, 8), dp(c, 8), dp(c, 8));
+            // Not focusable, so the row itself still receives list item clicks.
+            more.setFocusable(false);
+            more.setVisibility(GONE);
+            LayoutParams mlp = new LayoutParams(dp(c, 36), dp(c, 36));
+            mlp.setMarginStart(dp(c, 4));
+            addView(more, mlp);
+        }
+
+        public final ImageButton more;
+
+        /** Shows the ⋮ button with the given action, or hides it when {@code onMore} is null. */
+        public void setMore(View.OnClickListener onMore) {
+            more.setVisibility(onMore == null ? GONE : VISIBLE);
+            more.setOnClickListener(onMore);
+        }
+
+        /** A local video: 16:9 thumbnail (decoded in the background) and its duration. */
+        public void setVideo(File f, boolean thumbnails) {
+            icon.setTag(null);
+            icon.setBackgroundTintList(null);
+            icon.setImageResource(R.drawable.ic_movie);
+            icon.setImageTintList(android.content.res.ColorStateList.valueOf(getContext().getColor(R.color.text_dim)));
+            icon.setScaleType(ImageView.ScaleType.CENTER);
+            icon.getLayoutParams().width = dp(getContext(), 80);
+            icon.requestLayout();
+            trailing.setText("");
+            Thumbs.load(icon, trailing, f, thumbnails);
         }
 
         public void setIcon(int res, int tint) {
             icon.setTag(null);
+            icon.setTag(R.id.thumb_key, null);
+            trailing.setTag(R.id.thumb_key, null);
+            icon.setPadding(0, 0, 0, 0);
+            icon.setBackgroundTintList(android.content.res.ColorStateList.valueOf(soft(tint)));
             icon.setImageResource(res);
             icon.setImageTintList(android.content.res.ColorStateList.valueOf(tint));
             icon.setScaleType(ImageView.ScaleType.CENTER);
@@ -188,7 +262,17 @@ public final class Ui {
         }
 
         /** Loads a remote thumbnail (16:9) into the icon slot. */
+        /** A local song: embedded album art when the file has one, otherwise a coloured note. */
+        public void setSong(File f, boolean art) {
+            setIcon(R.drawable.ic_music_file, paletteColor(getContext(), f.getParent()));
+            trailing.setText("");
+            Thumbs.load(icon, trailing, f, art);
+        }
+
         public void setThumb(String url) {
+            icon.setBackgroundTintList(null);
+            icon.setTag(R.id.thumb_key, null);
+            trailing.setTag(R.id.thumb_key, null);
             icon.setImageTintList(null);
             icon.setScaleType(ImageView.ScaleType.CENTER_CROP);
             icon.getLayoutParams().width = dp(getContext(), 80);

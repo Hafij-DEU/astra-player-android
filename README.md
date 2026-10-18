@@ -7,12 +7,18 @@ with an amber accent and compact see-through controls at the bottom.
 ## Features
 
 - **Plays almost any file**: MKV, MP4, AVI (DivX/Xvid), WMV, FLV, MOV, WebM, TS, MP3, FLAC, Opus and more, through libVLC.
-- **Light or dark theme**: follows the system by default, or pick Light or Dark in the ⋮ menu. The player itself is always dark.
+- **Colourful light or dark theme**: follows the system by default, or pick Light or Dark in Settings. Folders, playlists and tabs get their own colours. The player itself is always dark.
+- **Settings tab** in the bottom bar with every option in one place.
+- **One-hand mode** (on by default): search bars, toolbars and dialogs sit at the bottom of the screen, within thumb reach on phones and tablets.
+- **Use as music player**: turn on the Music library to get a Videos | Music switch in Files. Music has its own views (music folders, all songs, or browse), album art, and its own file-type list, so you can untick formats you don't want.
 - **Files tab with three views** (switch with the list button or "Files view" in the ⋮ menu):
   - **Video folders** (default): only the folders that hold videos, each with its full path and video count. Open one to see just its videos and play the whole folder.
   - **All videos**: every video on the device in one list, with its folder path.
   - **Browse storage**: classic folder browsing from internal storage and SD cards, including audio files.
   The video list is cached, so it appears at once and refreshes in the background (or with the refresh button). Tapping a video queues its whole folder from that video. You can also pick files with the system picker.
+- **Modern file manager**: video thumbnails with duration, search as you type, and sorting by name, date or size (ascending or descending).
+- **Hide** folders or single files from Astra (undo in Files settings › Hidden items, or tick "Show hidden items"), and **exclude extensions** you never want listed (e.g. `3gp, ts`).
+- **File actions** from ⋮ or a long-press: rename (subtitle files are renamed with the video), share, details (resolution, duration, bitrate, subtitles), hide, and **delete from device** with confirmation, optionally together with matching subtitle files.
 - **Playlists**: a play queue with play once / repeat file / repeat all and shuffle, plus saved playlists that persist and can be renamed or deleted.
 - **Streams**: HTTP files, HLS (`.m3u8`), DASH (`.mpd`), RTSP/RTMP, and "Open with" or "Share" from other apps.
 - **YouTube**: search and watch without an API key or account (NewPipeExtractor). Live streams play too.
@@ -57,6 +63,10 @@ gradle assembleRelease
 ### Why libVLC and not Media3/ExoPlayer
 
 Media3 only plays exotic audio formats with its FFmpeg extension, and that extension must be compiled with the Android NDK. libVLC ships prebuilt for every ABI on Maven Central and decodes video and audio codecs that phone hardware does not (MS-MPEG4, WMV, RealVideo and more), so it builds with a plain Gradle setup and covers more files.
+
+## Author
+
+Made by Md Hafijur Rahman ([Hafij-DEU](https://github.com/Hafij-DEU)).
 
 ## Licence
 

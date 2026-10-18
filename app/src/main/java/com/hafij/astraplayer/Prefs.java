@@ -8,6 +8,8 @@ import org.json.JSONArray;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 /** Settings, resume positions and stream history. */
 public final class Prefs {
@@ -30,6 +32,16 @@ public final class Prefs {
             "Only folders that hold videos, with their full path",
             "Every video in one list",
             "All folders, starting from the storage root"};
+
+    public static final int KIND_VIDEO = 0, KIND_MUSIC = 1;
+    public static final String[] MUSIC_VIEW_NAMES = {"Music folders", "All songs", "Browse storage"};
+    public static final String[] MUSIC_VIEW_HINTS = {
+            "Only folders that hold music, with their full path",
+            "Every song in one list",
+            "All folders, starting from the storage root"};
+
+    public static final int SORT_NAME = 0, SORT_DATE = 1, SORT_SIZE = 2;
+    public static final String[] SORT_NAMES = {"Name", "Date modified", "Size / number of videos"};
 
     private static final int MAX_HISTORY = 30;
     private static final int MAX_RESUME = 400;
@@ -79,6 +91,71 @@ public final class Prefs {
     /** JSON cache of the last video-folder scan, so the list shows instantly. */
     public String videoFolders() { return sp.getString("video_folders", null); }
     public void setVideoFolders(String json) { sp.edit().putString("video_folders", json).apply(); }
+
+    /** "Use as music player": adds a Music library next to Videos in the Files tab. */
+    public boolean musicLibrary() { return sp.getBoolean("music_library", false); }
+    public void setMusicLibrary(boolean v) { sp.edit().putBoolean("music_library", v).apply(); }
+
+    /** Which library the Files tab shows: KIND_VIDEO or KIND_MUSIC. */
+    public int filesKind() { return musicLibrary() ? sp.getInt("files_kind", KIND_VIDEO) : KIND_VIDEO; }
+    public void setFilesKind(int v) { sp.edit().putInt("files_kind", v).apply(); }
+
+    public int musicView() { return sp.getInt("music_view", FILES_FOLDERS); }
+    public void setMusicView(int v) { sp.edit().putInt("music_view", v).apply(); }
+
+    /** The Files view of the library currently shown (folders, all, browse). */
+    public int currentView() { return filesKind() == KIND_MUSIC ? musicView() : filesView(); }
+    public void setCurrentView(int v) {
+        if (filesKind() == KIND_MUSIC) setMusicView(v);
+        else setFilesView(v);
+    }
+
+    public String folderCache(int kind) { return sp.getString(kind == KIND_MUSIC ? "music_folders" : "video_folders", null); }
+    public void setFolderCache(int kind, String json) { sp.edit().putString(kind == KIND_MUSIC ? "music_folders" : "video_folders", json).apply(); }
+
+    /** One-hand mode: search bars, toolbars and dialogs sit at the bottom, within thumb reach. */
+    public boolean oneHand() { return sp.getBoolean("one_hand", true); }
+    public void setOneHand(boolean v) { sp.edit().putBoolean("one_hand", v).apply(); }
+
+    public int sortMode() { return sp.getInt("sort_mode", SORT_NAME); }
+    public boolean sortDescending() { return sp.getBoolean("sort_desc", false); }
+    public void setSort(int mode, boolean descending) {
+        sp.edit().putInt("sort_mode", mode).putBoolean("sort_desc", descending).apply();
+    }
+
+    public boolean showHidden() { return sp.getBoolean("show_hidden", false); }
+    public void setShowHidden(boolean v) { sp.edit().putBoolean("show_hidden", v).apply(); }
+
+    public boolean thumbnails() { return sp.getBoolean("thumbnails", true); }
+    public void setThumbnails(boolean v) { sp.edit().putBoolean("thumbnails", v).apply(); }
+
+    /** Absolute paths of folders and files the user hid from the Files tab. */
+    public Set<String> hiddenPaths() { return stringSet("hidden_paths"); }
+    public void setHiddenPaths(Set<String> paths) { putStringSet("hidden_paths", paths); }
+
+    /** Lower-case extensions (without dot) never shown in the Files tab. */
+    public Set<String> excludedExtensions() { return stringSet("excluded_ext"); }
+    public void setExcludedExtensions(Set<String> exts) { putStringSet("excluded_ext", exts); }
+
+    /** Filter built from the current hide/exclude settings. */
+    public MediaFiles.Filter filter() {
+        return new MediaFiles.Filter(hiddenPaths(), excludedExtensions(), showHidden());
+    }
+
+    // Stored as a JSON array: getStringSet returns a live set that must not be modified.
+    private Set<String> stringSet(String key) {
+        Set<String> out = new TreeSet<>();
+        try {
+            JSONArray a = new JSONArray(sp.getString(key, "[]"));
+            for (int i = 0; i < a.length(); i++) out.add(a.getString(i));
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    private void putStringSet(String key, Set<String> values) {
+        sp.edit().putString(key, new JSONArray(new ArrayList<>(new TreeSet<>(values))).toString()).apply();
+    }
 
     public boolean fontsReady() { return sp.getBoolean("fonts_ready", false); }
     public void setFontsReady() { sp.edit().putBoolean("fonts_ready", true).apply(); }

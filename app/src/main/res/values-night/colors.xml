@@ -10,4 +10,13 @@
     <color name="text">#F1F1F3</color>
     <color name="text_dim">#9A9AA5</color>
     <color name="divider">#2C2C34</color>
+    <!-- Colourful palette for icons, tabs and chips. -->
+    <color name="c_violet">#B39DFF</color>
+    <color name="c_teal">#4DD0C1</color>
+    <color name="c_rose">#FF7A99</color>
+    <color name="c_blue">#7FB7FF</color>
+    <color name="c_green">#6FDC8C</color>
+    <color name="c_orange">#FFAB5E</color>
+    <color name="c_pink">#F48FB1</color>
+    <color name="c_indigo">#8C9EFF</color>
 </resources>
