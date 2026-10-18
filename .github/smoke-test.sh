@@ -28,6 +28,14 @@ adb shell am start -W -a android.intent.action.VIEW -t video/mp4 \
   -d "file:///sdcard/Movies/Smoke/Smoke%20video.mp4" -n "$PKG/.PlayerActivity"
 sleep 45
 shot 03-player-video
+# Swipe-seek: hold a sideways drag on the video to bring up the seek preview thumbnail.
+SIZE=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1); W=${SIZE%x*}; H=${SIZE#*x}
+adb shell input motionevent DOWN $((W/4)) $((H/2))
+for step in 1 2 3 4 5 6; do adb shell input motionevent MOVE $((W/4 + step*W/12)) $((H/2)); sleep 0.3; done
+sleep 2
+shot 03b-seek-preview
+adb shell input motionevent UP $((W*3/4)) $((H/2))
+sleep 3
 adb shell am start -W -a android.intent.action.VIEW -t video/avi \
   -d "file:///sdcard/Movies/Smoke/Old%20clip.avi" -n "$PKG/.PlayerActivity"
 sleep 10

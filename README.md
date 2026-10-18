@@ -24,6 +24,7 @@ with an amber accent and compact see-through controls at the bottom.
 - **YouTube**: search and watch without an API key or account (NewPipeExtractor). Live streams play too.
 - **Subtitles**: embedded tracks, `.srt`/`.ass`/`.ssa`/`.vtt`/`.sub` files picked up automatically from the same folder (or a `Subs` folder), loading a file by hand, sync adjustment and styling (size, colour, background, bold).
 - **Audio**: switch audio tracks, adjust audio sync, playback speed 0.25×–4× with pitch correction.
+- **Seek preview**: drag the seek bar or swipe sideways to see a thumbnail of the target time (local videos), with the time shown for every source.
 - **A-B repeat**, **resume where you left off**, **screenshots** (Pictures/Astra Player).
 - **Picture-in-picture**, **background audio** with a media notification and lock-screen controls.
 - **Gestures**: swipe the left side for brightness, the right side for volume, sideways to seek; double-tap the sides to skip 10 s.

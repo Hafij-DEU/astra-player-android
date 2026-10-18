@@ -97,6 +97,12 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
     // Gesture state
     private int gestureMode; // 0 none, 1 seek, 2 brightness, 3 volume
     private long gestureSeekBase, gestureSeekTarget;
+
+    private SeekPreview seekPreview;
+    private View previewCard;
+    private ImageView previewImage;
+    private TextView previewTime;
+    private long previewAt = -1;
     private float gestureVolume, gestureBrightness;
 
     private final Runnable hideControls = () -> showControls(false);
@@ -258,7 +264,11 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
                 if (fromUser && service != null) {
                     long t = service.length() * p / 1000;
                     timeCurrent.setText(MediaFiles.formatTime(t));
-                    info(MediaFiles.formatTime(t) + " / " + MediaFiles.formatTime(service.length()));
+                    // Centre the preview over the thumb.
+                    int[] loc = new int[2];
+                    s.getLocationInWindow(loc);
+                    float track = s.getWidth() - s.getPaddingLeft() - s.getPaddingRight();
+                    showSeekPreview(t, loc[0] + s.getPaddingLeft() + track * p / s.getMax(), true);
                 }
             }
 
@@ -271,6 +281,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
             @Override
             public void onStopTrackingTouch(SeekBar s) {
                 seeking = false;
+                hideSeekPreview();
                 if (service != null) service.seekTo(service.length() * s.getProgress() / 1000);
                 bumpHide();
             }
@@ -308,6 +319,54 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         });
 
         setupGestures();
+
+        previewCard = findViewById(R.id.seek_preview);
+        previewImage = findViewById(R.id.seek_preview_image);
+        previewTime = findViewById(R.id.seek_preview_time);
+        previewImage.setClipToOutline(true);
+        seekPreview = new SeekPreview(this);
+        seekPreview.setListener((t, b) -> {
+            // Show a late frame only if it is still near the position being dragged to.
+            if (previewCard.getVisibility() == View.VISIBLE && Math.abs(t - previewAt) < 4000) previewImage.setImageBitmap(b);
+        });
+    }
+
+    /**
+     * Shows the time (and, for local videos, a frame) of {@code timeMs} centred at window x
+     * {@code centerX}: above the seek bar while dragging it, mid-screen for swipe seeking.
+     */
+    private void showSeekPreview(long timeMs, float centerX, boolean overSeekBar) {
+        if (service == null) return;
+        previewAt = timeMs;
+        previewTime.setText(MediaFiles.formatTime(timeMs) + " / " + MediaFiles.formatTime(service.length()));
+        boolean frames = seekPreview.active();
+        previewImage.setVisibility(frames ? View.VISIBLE : View.GONE);
+        if (frames) {
+            android.graphics.Bitmap b = seekPreview.request(timeMs);
+            if (b != null) previewImage.setImageBitmap(b);
+        }
+        previewCard.setVisibility(View.VISIBLE);
+        View root = findViewById(R.id.root);
+        previewCard.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        int w = previewCard.getMeasuredWidth(), h = previewCard.getMeasuredHeight();
+        int margin = Ui.dp(this, 8);
+        float x = Math.max(margin, Math.min(root.getWidth() - w - margin, centerX - w / 2f));
+        float y;
+        if (overSeekBar && controls.getVisibility() == View.VISIBLE) {
+            int[] loc = new int[2];
+            controls.getLocationInWindow(loc);
+            y = loc[1] - h - Ui.dp(this, 10);
+        } else {
+            y = root.getHeight() * 0.5f - h / 2f;
+        }
+        previewCard.setX(x);
+        previewCard.setY(Math.max(margin, y));
+        centerInfo.setVisibility(overSeekBar ? View.GONE : centerInfo.getVisibility());
+    }
+
+    private void hideSeekPreview() {
+        previewAt = -1;
+        if (previewCard != null) previewCard.setVisibility(View.GONE);
     }
 
     // ---- lifecycle ------------------------------------------------------------------------
@@ -349,6 +408,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
 
     @Override
     protected void onDestroy() {
+        if (seekPreview != null) seekPreview.release();
         main.removeCallbacksAndMessages(null);
         if (service != null) {
             detachVideo();
@@ -476,6 +536,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
 
     @Override
     public void onItemChanged(MediaItem item) {
+        if (seekPreview != null) seekPreview.setSource(item);
         errorCard.setVisibility(View.GONE);
         // Hide the previous item's last frame until the new one draws.
         findViewById(R.id.blank).setVisibility(View.VISIBLE);
@@ -709,7 +770,8 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
                     // Full width swipe = 90 seconds.
                     long delta = (long) (totalX / g.getWidth() * 90000);
                     gestureSeekTarget = Math.max(0, Math.min(service.length(), gestureSeekBase + delta));
-                    info((delta >= 0 ? "+" : "−") + MediaFiles.formatTime(Math.abs(delta)) + "  ·  " + MediaFiles.formatTime(gestureSeekTarget));
+                    info((delta >= 0 ? "+" : "−") + MediaFiles.formatTime(Math.abs(delta)));
+                    showSeekPreview(gestureSeekTarget, g.getWidth() / 2f, false);
                 } else if (gestureMode == 2) {
                     gestureBrightness = Math.max(0.01f, Math.min(1f, gestureBrightness + dy / g.getHeight() * 1.2f));
                     WindowManager.LayoutParams lp = getWindow().getAttributes();
@@ -729,6 +791,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
             boolean handled = detector.onTouchEvent(ev);
             if ((ev.getActionMasked() == MotionEvent.ACTION_UP || ev.getActionMasked() == MotionEvent.ACTION_CANCEL) && gestureMode == 1 && service != null) {
                 service.seekTo(gestureSeekTarget);
+                hideSeekPreview();
                 gestureMode = 0;
             }
             return handled;
