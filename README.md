@@ -2,12 +2,17 @@
 
 A free media player for Android with no ads, no account and no subscription.
 It is the Android companion of [Astra Player for Linux](https://github.com/Hafij-DEU/video-player),
-with a dark interface, an amber accent and compact see-through controls at the bottom.
+with an amber accent and compact see-through controls at the bottom.
 
 ## Features
 
 - **Plays almost any file**: MKV, MP4, AVI (DivX/Xvid), WMV, FLV, MOV, WebM, TS, MP3, FLAC, Opus and more, through libVLC.
-- **Folders**: browse internal storage and SD cards, play a whole folder, or pick files with the system picker.
+- **Light or dark theme**: follows the system by default, or pick Light or Dark in the ⋮ menu. The player itself is always dark.
+- **Files tab with three views** (switch with the list button or "Files view" in the ⋮ menu):
+  - **Video folders** (default): only the folders that hold videos, each with its full path and video count. Open one to see just its videos and play the whole folder.
+  - **All videos**: every video on the device in one list, with its folder path.
+  - **Browse storage**: classic folder browsing from internal storage and SD cards, including audio files.
+  The video list is cached, so it appears at once and refreshes in the background (or with the refresh button). Tapping a video queues its whole folder from that video. You can also pick files with the system picker.
 - **Playlists**: a play queue with play once / repeat file / repeat all and shuffle, plus saved playlists that persist and can be renamed or deleted.
 - **Streams**: HTTP files, HLS (`.m3u8`), DASH (`.mpd`), RTSP/RTMP, and "Open with" or "Share" from other apps.
 - **YouTube**: search and watch without an API key or account (NewPipeExtractor). Live streams play too.

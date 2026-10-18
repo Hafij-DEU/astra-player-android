@@ -3,6 +3,7 @@ package com.hafij.astraplayer;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
@@ -15,6 +16,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -46,6 +48,7 @@ import java.util.function.BiConsumer;
 public class MainActivity extends Activity implements PlaybackService.Listener {
     private static final int TAB_FILES = 0, TAB_PLAYLISTS = 1, TAB_STREAMS = 2, TAB_YOUTUBE = 3;
     private static final int REQ_OPEN = 11, REQ_STORAGE = 12, REQ_NOTIFY = 13;
+    private static final long SCAN_INTERVAL_MS = 30_000;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -60,8 +63,21 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
     private final List<LinearLayout> tabs = new ArrayList<>();
     private int tab = TAB_FILES;
 
-    // Files tab
+    // Files tab. In browse mode `folder` is the current directory; in the other views it is
+    // the opened video folder (null = the folder or video list).
     private File folder;
+    private final ExecutorService scanner = Executors.newSingleThreadExecutor();
+    private List<MediaFiles.VideoFolder> videoFolders = new ArrayList<>();
+    private String videoFoldersJson;
+    private boolean scanning;
+    private long lastScan;
+    private List<File> allVideos; // null until built from videoFolders
+    private boolean allVideosBuilding;
+    private int allVideosGen;
+    private boolean hadStorageAccess;
+    private boolean destroyed;
+    private BaseAdapter filesAdapter;
+    private TextView filesStatus;
     // Playlists tab: null = overview, otherwise the open playlist
     private String openPlaylist;
     // YouTube tab state survives tab switches
@@ -87,12 +103,22 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
     };
 
     @Override
+    protected void attachBaseContext(Context base) {
+        super.attachBaseContext(base);
+        Ui.applyTheme(this, new Prefs(base).theme());
+    }
+
+    @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         prefs = new Prefs(this);
         playlists = new PlaylistStore(this);
         String last = prefs.lastFolder();
         folder = last != null && new File(last).isDirectory() ? new File(last) : null;
+        // Show the last scan at once; onResume refreshes it in the background.
+        videoFoldersJson = prefs.videoFolders();
+        videoFolders = MediaFiles.foldersFromJson(videoFoldersJson);
+        hadStorageAccess = hasStorageAccess();
         buildLayout();
         if (state != null) tab = state.getInt("tab", TAB_FILES);
         showTab(tab);
@@ -111,17 +137,29 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
     @Override
     protected void onResume() {
         super.onResume();
-        // Coming back from the "all files access" settings page.
-        if (tab == TAB_FILES) showTab(TAB_FILES);
-        else if (tab == TAB_PLAYLISTS) showTab(TAB_PLAYLISTS);
+        boolean access = hasStorageAccess();
+        if (tab == TAB_FILES) {
+            // Rebuild only when access changed (back from the settings page); otherwise keep
+            // the scroll position and just refresh rows so resume positions update.
+            if (access != hadStorageAccess) showTab(TAB_FILES);
+            else if (filesAdapter != null) filesAdapter.notifyDataSetChanged();
+        } else if (tab == TAB_PLAYLISTS) {
+            showTab(TAB_PLAYLISTS);
+        }
+        hadStorageAccess = access;
+        if (access && prefs.filesView() != Prefs.FILES_BROWSE && SystemClock.elapsedRealtime() - lastScan > SCAN_INTERVAL_MS) {
+            rescan();
+        }
         refreshNowBar();
     }
 
     @Override
     protected void onDestroy() {
+        destroyed = true;
         if (service != null) service.removeListener(this);
         unbindService(connection);
         worker.shutdownNow();
+        scanner.shutdownNow();
         super.onDestroy();
     }
 
@@ -130,15 +168,15 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
     private void buildLayout() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFF101013);
+        root.setBackgroundColor(getColor(R.color.bg));
         root.setFitsSystemWindows(true);
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(dp(18), dp(14), dp(8), dp(6));
-        TextView logo = Ui.text(this, "Astra", 24, Ui.AMBER);
+        TextView logo = Ui.text(this, "Astra", 24, getColor(R.color.accent));
         logo.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
-        TextView logo2 = Ui.text(this, " Player", 24, Ui.TEXT);
+        TextView logo2 = Ui.text(this, " Player", 24, getColor(R.color.text));
         logo2.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
         header.addView(logo);
         header.addView(logo2, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -159,10 +197,10 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         nowBar.setPadding(dp(14), dp(8), dp(8), dp(8));
         LinearLayout texts = new LinearLayout(this);
         texts.setOrientation(LinearLayout.VERTICAL);
-        nowTitle = Ui.text(this, "", 14, Ui.TEXT);
+        nowTitle = Ui.text(this, "", 14, getColor(R.color.text));
         nowTitle.setSingleLine(true);
         nowTitle.setEllipsize(TextUtils.TruncateAt.END);
-        nowSub = Ui.text(this, "", 12, Ui.AMBER);
+        nowSub = Ui.text(this, "", 12, getColor(R.color.accent));
         nowSub.setSingleLine(true);
         texts.addView(nowTitle);
         texts.addView(nowSub);
@@ -182,7 +220,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         root.addView(nowBar, nlp);
 
         LinearLayout nav = new LinearLayout(this);
-        nav.setBackgroundColor(0xFF16161A);
+        nav.setBackgroundColor(getColor(R.color.nav));
         nav.setPadding(0, dp(4), 0, dp(4));
         String[] names = {"Files", "Playlists", "Streams", "YouTube"};
         int[] icons = {R.drawable.ic_folder, R.drawable.ic_playlist, R.drawable.ic_link, R.drawable.ic_search};
@@ -195,7 +233,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
             ImageView iv = new ImageView(this);
             iv.setImageResource(icons[i]);
             t.addView(iv, new LinearLayout.LayoutParams(dp(22), dp(22)));
-            TextView tv = Ui.text(this, names[i], 11, Ui.TEXT_DIM);
+            TextView tv = Ui.text(this, names[i], 11, getColor(R.color.text_dim));
             tv.setGravity(Gravity.CENTER);
             t.addView(tv);
             final int idx = i;
@@ -228,7 +266,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         tab = t;
         for (int i = 0; i < tabs.size(); i++) {
             LinearLayout l = tabs.get(i);
-            int color = i == t ? Ui.AMBER : Ui.TEXT_DIM;
+            int color = i == t ? getColor(R.color.accent) : getColor(R.color.text_dim);
             ((ImageView) l.getChildAt(0)).setImageTintList(ColorStateList.valueOf(color));
             ((TextView) l.getChildAt(1)).setTextColor(color);
         }
@@ -247,10 +285,14 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         PopupMenu m = new PopupMenu(this, anchor);
         m.getMenu().add(0, 1, 0, "Play in background").setCheckable(true).setChecked(prefs.backgroundPlay());
         m.getMenu().add(0, 2, 0, "Resume where I left off").setCheckable(true).setChecked(prefs.resumeEnabled());
+        m.getMenu().add(0, 4, 0, "Theme: " + Prefs.THEME_NAMES[prefs.theme()]);
+        m.getMenu().add(0, 5, 0, "Files view: " + Prefs.FILES_VIEW_NAMES[prefs.filesView()]);
         m.getMenu().add(0, 3, 0, "About Astra Player");
         m.setOnMenuItemClickListener(i -> {
             if (i.getItemId() == 1) prefs.setBackgroundPlay(!prefs.backgroundPlay());
             else if (i.getItemId() == 2) prefs.setResumeEnabled(!prefs.resumeEnabled());
+            else if (i.getItemId() == 4) chooseTheme();
+            else if (i.getItemId() == 5) chooseFilesView();
             else {
                 String v = "";
                 try { v = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception ignored) {}
@@ -265,6 +307,38 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
             return true;
         });
         m.show();
+    }
+
+    private void chooseTheme() {
+        Ui.dialog(this).setTitle("Theme").setSingleChoiceItems(Prefs.THEME_NAMES, prefs.theme(), (d, w) -> {
+            d.dismiss();
+            if (w == prefs.theme()) return;
+            prefs.setTheme(w);
+            recreate();
+        }).show();
+    }
+
+    private void chooseFilesView() {
+        CharSequence[] items = new CharSequence[Prefs.FILES_VIEW_NAMES.length];
+        for (int i = 0; i < items.length; i++) {
+            android.text.SpannableString sp = new android.text.SpannableString(Prefs.FILES_VIEW_NAMES[i] + "\n" + Prefs.FILES_VIEW_HINTS[i]);
+            int start = Prefs.FILES_VIEW_NAMES[i].length() + 1;
+            sp.setSpan(new android.text.style.RelativeSizeSpan(0.8f), start, sp.length(), 0);
+            sp.setSpan(new android.text.style.ForegroundColorSpan(getColor(R.color.text_dim)), start, sp.length(), 0);
+            items[i] = sp;
+        }
+        Ui.dialog(this).setTitle("Files view").setSingleChoiceItems(items, prefs.filesView(), (d, w) -> {
+            d.dismiss();
+            setFilesView(w);
+        }).show();
+    }
+
+    private void setFilesView(int view) {
+        prefs.setFilesView(view);
+        folder = null;
+        prefs.setLastFolder(null);
+        showTab(TAB_FILES);
+        if (view != Prefs.FILES_BROWSE && lastScan == 0) rescan();
     }
 
     // ---- playback helpers -----------------------------------------------------------------
@@ -426,12 +500,14 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
     }
 
     private View buildFiles() {
+        filesAdapter = null;
+        filesStatus = null;
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         if (!hasStorageAccess()) {
             box.setPadding(dp(18), dp(18), dp(18), dp(18));
-            TextView t = Ui.text(this, "Browse your folders", 20, Ui.TEXT);
-            TextView m = Ui.text(this, "To show folders, play whole folders and pick up subtitle files next to your videos, Astra Player needs access to all files. Nothing leaves your device.", 14, Ui.TEXT_DIM);
+            TextView t = Ui.text(this, "Browse your folders", 20, getColor(R.color.text));
+            TextView m = Ui.text(this, "To show folders, play whole folders and pick up subtitle files next to your videos, Astra Player needs access to all files. Nothing leaves your device.", 14, getColor(R.color.text_dim));
             m.setPadding(0, dp(8), 0, dp(16));
             TextView allow = Ui.button(this, "Allow file access", true);
             allow.setOnClickListener(v -> requestStorage());
@@ -445,7 +521,245 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
             box.addView(pick, lp);
             return box;
         }
+        int view = prefs.filesView();
+        if (view == Prefs.FILES_BROWSE) return buildBrowse(box);
+        if (folder != null) return buildVideoFolder(box, folder);
+        return view == Prefs.FILES_ALL ? buildAllVideos(box) : buildVideoFolders(box);
+    }
 
+    /** Status text, view switch and refresh, shared by the folder and all-videos views. */
+    private void addScanBar(LinearLayout box) {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(18), 0, dp(8), dp(6));
+        filesStatus = Ui.text(this, "", 13, getColor(R.color.text_dim));
+        filesStatus.setSingleLine(true);
+        bar.addView(filesStatus, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        bar.addView(viewSwitchButton());
+        ImageButton refresh = iconButton(R.drawable.ic_refresh, "Look for videos again");
+        refresh.setOnClickListener(v -> rescan());
+        bar.addView(refresh);
+        box.addView(bar);
+        updateFilesStatus();
+    }
+
+    private ImageButton viewSwitchButton() {
+        ImageButton b = iconButton(R.drawable.ic_view_list, "Change files view");
+        b.setOnClickListener(v -> chooseFilesView());
+        return b;
+    }
+
+    private void updateFilesStatus() {
+        if (filesStatus == null) return;
+        String text;
+        if (prefs.filesView() == Prefs.FILES_ALL) {
+            text = allVideos == null || (scanning && allVideos.isEmpty()) ? "Looking for videos…" : count(allVideos.size(), "video", "videos");
+        } else {
+            text = scanning && videoFolders.isEmpty() ? "Looking for videos…" : count(videoFolders.size(), "folder with videos", "folders with videos");
+        }
+        filesStatus.setText(text);
+    }
+
+    private static String count(int n, String one, String many) {
+        return n + " " + (n == 1 ? one : many);
+    }
+
+    /** Scans storage for video folders on the scanner thread; the result replaces the cache. */
+    private void rescan() {
+        if (scanning || !hasStorageAccess()) return;
+        scanning = true;
+        lastScan = SystemClock.elapsedRealtime();
+        updateFilesStatus();
+        List<File> roots = storageRoots();
+        scanner.execute(() -> {
+            List<MediaFiles.VideoFolder> found = MediaFiles.findVideoFolders(roots);
+            String json = MediaFiles.toJson(found);
+            main.post(() -> {
+                if (destroyed) return;
+                scanning = false;
+                boolean changed = !json.equals(videoFoldersJson);
+                if (changed) {
+                    videoFolders = found;
+                    videoFoldersJson = json;
+                    prefs.setVideoFolders(json);
+                    allVideos = null;
+                    allVideosGen++;
+                }
+                // Rebuild only on a real change so the scroll position is kept.
+                if (tab == TAB_FILES && prefs.filesView() != Prefs.FILES_BROWSE && folder == null && changed) showTab(TAB_FILES);
+                else updateFilesStatus();
+            });
+        });
+    }
+
+    private boolean isInternalRoot(File f) {
+        return f.equals(Environment.getExternalStorageDirectory());
+    }
+
+    private View buildVideoFolders(LinearLayout box) {
+        addScanBar(box);
+        final List<MediaFiles.VideoFolder> rows = videoFolders;
+        ListView list = listView();
+        RowAdapter<MediaFiles.VideoFolder> adapter = new RowAdapter<>(rows, (row, vf) -> {
+            row.setIcon(R.drawable.ic_folder, getColor(R.color.accent));
+            row.title.setText(isInternalRoot(vf.dir) ? "Internal storage" : vf.dir.getName());
+            row.sub.setSingleLine(false);
+            row.sub.setMaxLines(3);
+            row.sub.setText(vf.dir.getAbsolutePath());
+            row.trailing.setText(count(vf.videos, "video", "videos"));
+        });
+        list.setAdapter(adapter);
+        filesAdapter = adapter;
+        list.setOnItemClickListener((p, v, pos, id) -> openVideoFolder(rows.get(pos).dir));
+        list.setOnItemLongClickListener((p, v, pos, id) -> {
+            folderMenu(v, rows.get(pos).dir);
+            return true;
+        });
+        if (rows.isEmpty()) box.addView(emptyText(scanning ? "Looking for videos…" : "No videos found on this device.\nTap refresh to look again."));
+        box.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        return box;
+    }
+
+    private void openVideoFolder(File dir) {
+        folder = dir;
+        prefs.setLastFolder(dir.getAbsolutePath());
+        showTab(TAB_FILES);
+    }
+
+    private void closeVideoFolder() {
+        folder = null;
+        prefs.setLastFolder(null);
+        showTab(TAB_FILES);
+    }
+
+    /** One video folder: only its videos, with the name, full path and Play folder. */
+    private View buildVideoFolder(LinearLayout box, File dir) {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(8), 0, dp(12), dp(6));
+        ImageButton back = iconButton(R.drawable.ic_back, "Back");
+        back.setOnClickListener(v -> closeVideoFolder());
+        bar.addView(back);
+        LinearLayout names = new LinearLayout(this);
+        names.setOrientation(LinearLayout.VERTICAL);
+        TextView name = Ui.text(this, isInternalRoot(dir) ? "Internal storage" : dir.getName(), 17, getColor(R.color.text));
+        name.setSingleLine(true);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        TextView path = Ui.text(this, dir.getAbsolutePath(), 12, getColor(R.color.text_dim));
+        path.setMaxLines(2);
+        path.setEllipsize(TextUtils.TruncateAt.START);
+        names.addView(name);
+        names.addView(path);
+        bar.addView(names, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        final List<File> videos = MediaFiles.videoFiles(dir);
+        if (!videos.isEmpty()) {
+            TextView playAll = Ui.button(this, "▶ Play folder", true);
+            playAll.setOnClickListener(v -> play(MediaFiles.videoItems(dir), 0));
+            playAll.setOnLongClickListener(v -> {
+                folderMenu(v, dir);
+                return true;
+            });
+            bar.addView(playAll);
+        }
+        box.addView(bar);
+
+        ListView list = listView();
+        RowAdapter<File> adapter = new RowAdapter<>(videos, (row, f) -> {
+            row.setIcon(R.drawable.ic_movie, getColor(R.color.text));
+            row.title.setText(f.getName());
+            row.sub.setText(fileInfo(f));
+            row.trailing.setText("");
+        });
+        list.setAdapter(adapter);
+        filesAdapter = adapter;
+        list.setOnItemClickListener((p, v, pos, id) -> playFrom(videos.get(pos)));
+        list.setOnItemLongClickListener((p, v, pos, id) -> {
+            itemMenu(v, Collections.singletonList(MediaItem.file(videos.get(pos))), 0);
+            return true;
+        });
+        if (videos.isEmpty()) box.addView(emptyText("No videos in this folder any more"));
+        box.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        return box;
+    }
+
+    private String fileInfo(File f) {
+        long pos = prefs.resumePosition(f.getAbsolutePath());
+        return size(f.length()) + (pos > 0 ? "  ·  resume " + MediaFiles.formatTime(pos) : "");
+    }
+
+    /** Queues the video's folder, starting at that video, like PotPlayer. */
+    private void playFrom(File video) {
+        File dir = video.getParentFile();
+        if (dir == null) {
+            play(Collections.singletonList(MediaItem.file(video)), 0);
+            return;
+        }
+        List<MediaItem> items = prefs.filesView() == Prefs.FILES_BROWSE ? MediaFiles.folderItems(dir) : MediaFiles.videoItems(dir);
+        int start = 0;
+        for (int i = 0; i < items.size(); i++) if (items.get(i).uri.equals(video.getAbsolutePath())) start = i;
+        if (items.isEmpty()) items = Collections.singletonList(MediaItem.file(video));
+        play(items, start);
+    }
+
+    private View buildAllVideos(LinearLayout box) {
+        addScanBar(box);
+        if (allVideos == null) {
+            buildAllVideosList();
+            box.addView(emptyText("Looking for videos…"));
+            return box;
+        }
+        final List<File> rows = allVideos;
+        ListView list = listView();
+        RowAdapter<File> adapter = new RowAdapter<>(rows, (row, f) -> {
+            row.setIcon(R.drawable.ic_movie, getColor(R.color.text));
+            row.title.setText(f.getName());
+            row.sub.setSingleLine(false);
+            row.sub.setMaxLines(3);
+            File parent = f.getParentFile();
+            row.sub.setText(fileInfo(f) + (parent == null ? "" : "\n" + parent.getAbsolutePath()));
+            row.trailing.setText("");
+        });
+        list.setAdapter(adapter);
+        filesAdapter = adapter;
+        list.setOnItemClickListener((p, v, pos, id) -> playFrom(rows.get(pos)));
+        list.setOnItemLongClickListener((p, v, pos, id) -> {
+            itemMenu(v, Collections.singletonList(MediaItem.file(rows.get(pos))), 0);
+            return true;
+        });
+        if (rows.isEmpty()) box.addView(emptyText(scanning ? "Looking for videos…" : "No videos found on this device.\nTap refresh to look again."));
+        box.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        return box;
+    }
+
+    /** Lists every cached folder's videos in the background. */
+    private void buildAllVideosList() {
+        if (allVideosBuilding) return;
+        allVideosBuilding = true;
+        final int gen = allVideosGen;
+        final List<MediaFiles.VideoFolder> src = new ArrayList<>(videoFolders);
+        scanner.execute(() -> {
+            List<File> all = new ArrayList<>();
+            for (MediaFiles.VideoFolder vf : src) all.addAll(MediaFiles.videoFiles(vf.dir));
+            all.sort((a, b) -> {
+                int c = MediaFiles.naturalCompare(a.getName(), b.getName());
+                return c != 0 ? c : a.getAbsolutePath().compareTo(b.getAbsolutePath());
+            });
+            main.post(() -> {
+                if (destroyed) return;
+                allVideosBuilding = false;
+                if (gen != allVideosGen) {
+                    // A rescan replaced the folders meanwhile; build again from the new ones.
+                    if (tab == TAB_FILES && prefs.filesView() == Prefs.FILES_ALL && folder == null) buildAllVideosList();
+                    return;
+                }
+                allVideos = all;
+                if (tab == TAB_FILES && prefs.filesView() == Prefs.FILES_ALL && folder == null) showTab(TAB_FILES);
+            });
+        });
+    }
+
+    /** Browse storage: folders plus every playable file, from the storage roots. */
+    private View buildBrowse(LinearLayout box) {
         List<File> roots = storageRoots();
         boolean atRoots = folder == null;
         final List<File> entries = atRoots ? roots : MediaFiles.list(folder);
@@ -458,11 +772,13 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         up.setAlpha(atRoots ? 0.3f : 1f);
         up.setOnClickListener(v -> goUp());
         bar.addView(up);
-        TextView path = Ui.text(this, atRoots ? "Storage" : prettyPath(folder), 13, Ui.TEXT_DIM);
+        TextView path = Ui.text(this, atRoots ? "Storage" : prettyPath(folder), 13, getColor(R.color.text_dim));
         path.setSingleLine(true);
         path.setEllipsize(TextUtils.TruncateAt.START);
         bar.addView(path, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        if (!atRoots) {
+        if (atRoots) {
+            bar.addView(viewSwitchButton());
+        } else {
             List<MediaItem> here = MediaFiles.folderItems(folder);
             if (!here.isEmpty()) {
                 TextView playAll = Ui.button(this, "▶ Play folder", true);
@@ -477,27 +793,28 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         box.addView(bar);
 
         ListView list = listView();
-        list.setAdapter(new RowAdapter<>(entries, (row, f) -> {
+        RowAdapter<File> adapter = new RowAdapter<>(entries, (row, f) -> {
             if (atRoots) {
-                row.setIcon(R.drawable.ic_folder, Ui.AMBER);
-                row.title.setText(f.equals(Environment.getExternalStorageDirectory()) ? "Internal storage" : f.getName());
+                row.setIcon(R.drawable.ic_folder, getColor(R.color.accent));
+                row.title.setText(isInternalRoot(f) ? "Internal storage" : f.getName());
                 row.sub.setText(f.getAbsolutePath());
                 row.trailing.setText("");
             } else if (f.isDirectory()) {
-                row.setIcon(R.drawable.ic_folder, Ui.AMBER);
+                row.setIcon(R.drawable.ic_folder, getColor(R.color.accent));
                 row.title.setText(f.getName());
                 String[] kids = f.list();
                 row.sub.setText(kids == null ? "" : kids.length + " items");
                 row.trailing.setText("");
             } else {
                 boolean audio = MediaFiles.isAudio(f.getName());
-                row.setIcon(audio ? R.drawable.ic_music_file : R.drawable.ic_movie, audio ? 0xFF7FB7FF : Ui.TEXT);
+                row.setIcon(audio ? R.drawable.ic_music_file : R.drawable.ic_movie, audio ? getColor(R.color.blue) : getColor(R.color.text));
                 row.title.setText(f.getName());
-                long pos = prefs.resumePosition(f.getAbsolutePath());
-                row.sub.setText(size(f.length()) + (pos > 0 ? "  ·  resume " + MediaFiles.formatTime(pos) : ""));
+                row.sub.setText(fileInfo(f));
                 row.trailing.setText("");
             }
-        }));
+        });
+        list.setAdapter(adapter);
+        filesAdapter = adapter;
         list.setOnItemClickListener((p, v, pos, id) -> {
             File f = entries.get(pos);
             if (atRoots || f.isDirectory()) {
@@ -505,11 +822,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
                 prefs.setLastFolder(f.getAbsolutePath());
                 showTab(TAB_FILES);
             } else {
-                // Queue the whole folder starting at the tapped file, like PotPlayer.
-                List<MediaItem> items = MediaFiles.folderItems(folder);
-                int start = 0;
-                for (int i = 0; i < items.size(); i++) if (items.get(i).uri.equals(f.getAbsolutePath())) start = i;
-                play(items, start);
+                playFrom(f);
             }
         });
         list.setOnItemLongClickListener((p, v, pos, id) -> {
@@ -533,7 +846,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         m.getMenu().add(0, 3, 0, "Add folder to queue");
         m.getMenu().add(0, 4, 0, "Save folder as playlist…");
         m.setOnMenuItemClickListener(i -> {
-            List<MediaItem> items = MediaFiles.folderItems(dir);
+            List<MediaItem> items = prefs.filesView() == Prefs.FILES_BROWSE ? MediaFiles.folderItems(dir) : MediaFiles.videoItems(dir);
             if (items.isEmpty()) {
                 Ui.toast(this, "No playable files in " + dir.getName());
                 return true;
@@ -569,13 +882,14 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         for (File r : storageRoots()) {
             if (r.equals(folder)) {
                 folder = null;
+                prefs.setLastFolder(null);
                 showTab(TAB_FILES);
                 return;
             }
         }
         File parent = folder.getParentFile();
         folder = parent != null && parent.canRead() ? parent : null;
-        if (folder != null) prefs.setLastFolder(folder.getAbsolutePath());
+        prefs.setLastFolder(folder == null ? null : folder.getAbsolutePath());
         showTab(TAB_FILES);
     }
 
@@ -601,7 +915,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         LinearLayout bar = new LinearLayout(this);
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setPadding(dp(18), dp(4), dp(12), dp(8));
-        bar.addView(Ui.text(this, all.size() + " saved playlists", 13, Ui.TEXT_DIM), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        bar.addView(Ui.text(this, all.size() + " saved playlists", 13, getColor(R.color.text_dim)), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         if (!queue.isEmpty()) {
             TextView save = Ui.button(this, "Save queue", false);
             save.setOnClickListener(v -> Ui.prompt(this, "Save queue as playlist", "Playlist name", "", name -> {
@@ -629,12 +943,12 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         ListView list = listView();
         list.setAdapter(new RowAdapter<>(rows, (row, o) -> {
             if (o instanceof String) {
-                row.setIcon(R.drawable.ic_play, Ui.AMBER);
+                row.setIcon(R.drawable.ic_play, getColor(R.color.accent));
                 row.title.setText("Now playing queue");
                 row.sub.setText(queue.size() + (queue.size() == 1 ? " item · " : " items · ") + new String[]{"play once", "repeat file", "repeat all"}[service.repeatMode()] + (service.shuffle() ? " · shuffle" : ""));
             } else {
                 PlaylistStore.Playlist p = (PlaylistStore.Playlist) o;
-                row.setIcon(R.drawable.ic_playlist, Ui.AMBER);
+                row.setIcon(R.drawable.ic_playlist, getColor(R.color.accent));
                 row.title.setText(p.name);
                 row.sub.setText(p.items.size() + (p.items.size() == 1 ? " item" : " items"));
             }
@@ -691,7 +1005,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         ImageButton back = iconButton(R.drawable.ic_back, "Back");
         back.setOnClickListener(v -> { openPlaylist = null; showTab(TAB_PLAYLISTS); });
         bar.addView(back);
-        TextView name = Ui.text(this, p.name, 17, Ui.TEXT);
+        TextView name = Ui.text(this, p.name, 17, getColor(R.color.text));
         name.setSingleLine(true);
         name.setEllipsize(TextUtils.TruncateAt.END);
         bar.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -746,9 +1060,9 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
 
     private void bindMedia(Ui.Row row, MediaItem m) {
         if (m.kind == MediaItem.YOUTUBE && m.thumb != null) row.setThumb(m.thumb);
-        else if (m.kind == MediaItem.STREAM) row.setIcon(R.drawable.ic_link, 0xFF7FB7FF);
-        else if (MediaFiles.isAudio(m.title)) row.setIcon(R.drawable.ic_music_file, 0xFF7FB7FF);
-        else row.setIcon(R.drawable.ic_movie, Ui.TEXT);
+        else if (m.kind == MediaItem.STREAM) row.setIcon(R.drawable.ic_link, getColor(R.color.blue));
+        else if (MediaFiles.isAudio(m.title)) row.setIcon(R.drawable.ic_music_file, getColor(R.color.blue));
+        else row.setIcon(R.drawable.ic_movie, getColor(R.color.text));
         row.title.setText(m.title);
         row.sub.setText(m.subtitle);
         row.trailing.setText(m.durationMs > 0 ? MediaFiles.formatTime(m.durationMs) : "");
@@ -794,16 +1108,16 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
             String u = url.getText().toString().trim();
             if (validUrl(u)) addToPlaylist(Collections.singletonList(MediaItem.fromUrl(u)));
         });
-        TextView hint = Ui.text(this, "Plays HTTP files, HLS, DASH, RTSP/RTMP and YouTube links. Long-press a recent address for more.", 12, Ui.TEXT_DIM);
+        TextView hint = Ui.text(this, "Plays HTTP files, HLS, DASH, RTSP/RTMP and YouTube links. Long-press a recent address for more.", 12, getColor(R.color.text_dim));
         hint.setPadding(dp(2), dp(4), 0, dp(10));
         box.addView(hint);
-        box.addView(Ui.text(this, "Recent", 13, Ui.AMBER));
+        box.addView(Ui.text(this, "Recent", 13, getColor(R.color.accent)));
 
         List<String> history = prefs.history();
         ListView list = listView();
         list.setPadding(0, dp(6), 0, 0);
         list.setAdapter(new RowAdapter<>(history, (r, h) -> {
-            r.setIcon(YouTube.isYouTubeUrl(h) ? R.drawable.ic_play : R.drawable.ic_link, Ui.AMBER);
+            r.setIcon(YouTube.isYouTubeUrl(h) ? R.drawable.ic_play : R.drawable.ic_link, getColor(R.color.accent));
             r.title.setText(MediaItem.guessTitle(h));
             r.sub.setText(h);
             r.trailing.setText("");
@@ -875,13 +1189,13 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
             return true;
         });
 
-        TextView note = Ui.text(this, "No account and no API key. Streams play inside Astra; YouTube videos cannot be downloaded.", 12, Ui.TEXT_DIM);
+        TextView note = Ui.text(this, "No account and no API key. Streams play inside Astra; YouTube videos cannot be downloaded.", 12, getColor(R.color.text_dim));
         note.setPadding(dp(2), dp(6), 0, dp(6));
         box.addView(note);
 
         if (ytLoading && ytResults.isEmpty()) {
             ProgressBar pb = new ProgressBar(this);
-            pb.setIndeterminateTintList(ColorStateList.valueOf(Ui.AMBER));
+            pb.setIndeterminateTintList(ColorStateList.valueOf(getColor(R.color.amber)));
             LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(dp(40), dp(40));
             plp.gravity = Gravity.CENTER_HORIZONTAL;
             plp.topMargin = dp(40);
@@ -973,7 +1287,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
     }
 
     private TextView emptyText(String s) {
-        TextView t = Ui.text(this, s, 14, Ui.TEXT_DIM);
+        TextView t = Ui.text(this, s, 14, getColor(R.color.text_dim));
         t.setGravity(Gravity.CENTER);
         t.setPadding(dp(24), dp(32), dp(24), dp(8));
         return t;
@@ -1003,7 +1317,8 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
     @Override
     public void onBackPressed() {
         if (tab == TAB_FILES && folder != null && hasStorageAccess()) {
-            goUp();
+            if (prefs.filesView() == Prefs.FILES_BROWSE) goUp();
+            else closeVideoFolder();
             return;
         }
         if (tab == TAB_PLAYLISTS && openPlaylist != null) {

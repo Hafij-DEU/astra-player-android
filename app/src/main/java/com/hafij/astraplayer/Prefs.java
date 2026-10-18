@@ -21,6 +21,16 @@ public final class Prefs {
     public static final String[] YT_QUALITY_NAMES = {"360p", "480p", "720p", "1080p", "1440p", "2160p"};
     public static final int[] YT_QUALITY_VALUES = {360, 480, 720, 1080, 1440, 2160};
 
+    public static final int THEME_SYSTEM = 0, THEME_LIGHT = 1, THEME_DARK = 2;
+    public static final String[] THEME_NAMES = {"System default", "Light", "Dark"};
+
+    public static final int FILES_FOLDERS = 0, FILES_ALL = 1, FILES_BROWSE = 2;
+    public static final String[] FILES_VIEW_NAMES = {"Video folders", "All videos", "Browse storage"};
+    public static final String[] FILES_VIEW_HINTS = {
+            "Only folders that hold videos, with their full path",
+            "Every video in one list",
+            "All folders, starting from the storage root"};
+
     private static final int MAX_HISTORY = 30;
     private static final int MAX_RESUME = 400;
 
@@ -59,6 +69,16 @@ public final class Prefs {
 
     public boolean shuffle() { return sp.getBoolean("shuffle", false); }
     public void setShuffle(boolean v) { sp.edit().putBoolean("shuffle", v).apply(); }
+
+    public int theme() { return sp.getInt("theme", THEME_SYSTEM); }
+    public void setTheme(int v) { sp.edit().putInt("theme", v).apply(); }
+
+    public int filesView() { return sp.getInt("files_view", FILES_FOLDERS); }
+    public void setFilesView(int v) { sp.edit().putInt("files_view", v).apply(); }
+
+    /** JSON cache of the last video-folder scan, so the list shows instantly. */
+    public String videoFolders() { return sp.getString("video_folders", null); }
+    public void setVideoFolders(String json) { sp.edit().putString("video_folders", json).apply(); }
 
     public boolean fontsReady() { return sp.getBoolean("fonts_ready", false); }
     public void setFontsReady() { sp.edit().putBoolean("fonts_ready", true).apply(); }

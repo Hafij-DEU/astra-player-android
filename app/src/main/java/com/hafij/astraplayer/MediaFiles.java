@@ -1,6 +1,12 @@
 package com.hafij.astraplayer;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.File;
+import java.io.IOException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -65,6 +71,111 @@ public final class MediaFiles {
     public static List<MediaItem> folderItems(File dir) {
         List<MediaItem> out = new ArrayList<>();
         for (File f : list(dir)) if (f.isFile()) out.add(MediaItem.file(f));
+        return out;
+    }
+
+    /** A folder that directly holds at least one video. */
+    public static final class VideoFolder {
+        public final File dir;
+        public final int videos;
+
+        public VideoFolder(File dir, int videos) {
+            this.dir = dir;
+            this.videos = videos;
+        }
+    }
+
+    /**
+     * Walks the storage roots and returns every folder that directly holds videos. Hidden
+     * folders and Android/data and Android/obb are skipped (Android/media is kept: WhatsApp
+     * saves videos there). Canonical paths guard against symlink loops.
+     */
+    public static List<VideoFolder> findVideoFolders(List<File> roots) {
+        List<VideoFolder> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        ArrayDeque<File> stack = new ArrayDeque<>();
+        for (int i = roots.size() - 1; i >= 0; i--) stack.push(roots.get(i));
+        while (!stack.isEmpty()) {
+            File dir = stack.pop();
+            String canon;
+            try {
+                canon = dir.getCanonicalPath();
+            } catch (IOException e) {
+                canon = dir.getAbsolutePath();
+            }
+            if (!seen.add(canon)) continue;
+            File[] kids = dir.listFiles();
+            if (kids == null) continue;
+            int videos = 0;
+            List<File> subdirs = new ArrayList<>();
+            for (File f : kids) {
+                String name = f.getName();
+                if (name.startsWith(".")) continue;
+                if (f.isDirectory()) {
+                    if (isSkippedAndroidDir(dir, name)) continue;
+                    subdirs.add(f);
+                } else if (isVideo(name)) {
+                    videos++;
+                }
+            }
+            if (videos > 0) out.add(new VideoFolder(dir, videos));
+            for (int i = subdirs.size() - 1; i >= 0; i--) stack.push(subdirs.get(i));
+        }
+        out.sort((a, b) -> {
+            int c = naturalCompare(a.dir.getName(), b.dir.getName());
+            return c != 0 ? c : a.dir.getAbsolutePath().compareTo(b.dir.getAbsolutePath());
+        });
+        return out;
+    }
+
+    private static boolean isSkippedAndroidDir(File parent, String name) {
+        if (!parent.getName().equals("Android")) return false;
+        return name.equals("data") || name.equals("obb");
+    }
+
+    public static String toJson(List<VideoFolder> folders) {
+        JSONArray a = new JSONArray();
+        for (VideoFolder f : folders) {
+            JSONObject o = new JSONObject();
+            try {
+                o.put("path", f.dir.getAbsolutePath());
+                o.put("videos", f.videos);
+            } catch (JSONException ignored) {
+            }
+            a.put(o);
+        }
+        return a.toString();
+    }
+
+    public static List<VideoFolder> foldersFromJson(String json) {
+        List<VideoFolder> out = new ArrayList<>();
+        if (json == null) return out;
+        try {
+            JSONArray a = new JSONArray(json);
+            for (int i = 0; i < a.length(); i++) {
+                JSONObject o = a.getJSONObject(i);
+                out.add(new VideoFolder(new File(o.getString("path")), o.optInt("videos")));
+            }
+        } catch (JSONException ignored) {
+        }
+        return out;
+    }
+
+    /** Videos directly inside a folder, in natural name order. */
+    public static List<File> videoFiles(File dir) {
+        List<File> out = new ArrayList<>();
+        File[] all = dir.listFiles();
+        if (all == null) return out;
+        for (File f : all) {
+            if (f.isFile() && !f.getName().startsWith(".") && isVideo(f.getName())) out.add(f);
+        }
+        out.sort((a, b) -> naturalCompare(a.getName(), b.getName()));
+        return out;
+    }
+
+    public static List<MediaItem> videoItems(File dir) {
+        List<MediaItem> out = new ArrayList<>();
+        for (File f : videoFiles(dir)) out.add(MediaItem.file(f));
         return out;
     }
 

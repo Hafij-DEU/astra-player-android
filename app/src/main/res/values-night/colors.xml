@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="amber">#F2A516</color>
+    <color name="accent">#F2A516</color>
+    <color name="blue">#7FB7FF</color>
+    <color name="bg">#101013</color>
+    <color name="nav">#16161A</color>
+    <color name="surface">#1A1A1F</color>
+    <color name="surface_high">#24242B</color>
+    <color name="text">#F1F1F3</color>
+    <color name="text_dim">#9A9AA5</color>
+    <color name="divider">#2C2C34</color>
+</resources>

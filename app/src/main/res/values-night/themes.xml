@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Base.Theme.Astra" parent="android:Theme.Material.NoActionBar" />
+
+    <style name="Base.Theme.Astra.Dialog" parent="android:Theme.Material.Dialog.Alert" />
+
+    <style name="Base.Astra.PopupMenu" parent="android:Widget.Material.PopupMenu" />
+</resources>

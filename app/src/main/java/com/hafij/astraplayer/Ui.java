@@ -3,6 +3,7 @@ package com.hafij.astraplayer;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Handler;
@@ -32,10 +33,6 @@ public final class Ui {
     private Ui() {
     }
 
-    public static final int AMBER = 0xFFF2A516;
-    public static final int TEXT = 0xFFF1F1F3;
-    public static final int TEXT_DIM = 0xFF9A9AA5;
-    public static final int SURFACE = 0xFF1A1A1F;
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final ExecutorService THUMBS = Executors.newFixedThreadPool(3);
@@ -45,6 +42,18 @@ public final class Ui {
             return value.getByteCount();
         }
     };
+
+    /**
+     * Forces light or dark for one activity. Call from attachBaseContext after super. The
+     * override is an empty delta carrying only uiMode, so rotation, font size and the rest
+     * keep following the system.
+     */
+    public static void applyTheme(Activity a, int theme) {
+        if (theme == Prefs.THEME_SYSTEM) return;
+        Configuration c = new Configuration();
+        c.uiMode = theme == Prefs.THEME_DARK ? Configuration.UI_MODE_NIGHT_YES : Configuration.UI_MODE_NIGHT_NO;
+        a.applyOverrideConfiguration(c);
+    }
 
     public static int dp(Context c, float v) {
         return Math.round(v * c.getResources().getDisplayMetrics().density);
@@ -74,7 +83,7 @@ public final class Ui {
         b.setMinHeight(dp(c, 42));
         b.setPadding(dp(c, 16), 0, dp(c, 16), 0);
         b.setBackgroundResource(filled ? R.drawable.bg_button : R.drawable.bg_button_ghost);
-        b.setTextColor(filled ? 0xFF101013 : AMBER);
+        b.setTextColor(filled ? 0xFF101013 : c.getColor(R.color.accent));
         if (filled) b.setTypeface(b.getTypeface(), android.graphics.Typeface.BOLD);
         b.setClickable(true);
         b.setFocusable(true);
@@ -86,8 +95,8 @@ public final class Ui {
         e.setHint(hint);
         e.setText(value);
         e.setSingleLine(true);
-        e.setTextColor(TEXT);
-        e.setHintTextColor(TEXT_DIM);
+        e.setTextColor(c.getColor(R.color.text));
+        e.setHintTextColor(c.getColor(R.color.text_dim));
         e.setBackgroundResource(R.drawable.bg_input);
         e.setPadding(dp(c, 14), dp(c, 10), dp(c, 14), dp(c, 10));
         e.setInputType(InputType.TYPE_CLASS_TEXT);
@@ -154,10 +163,10 @@ public final class Ui {
             addView(icon, new LayoutParams(dp(c, 44), dp(c, 44)));
             LinearLayout texts = new LinearLayout(c);
             texts.setOrientation(VERTICAL);
-            title = text(c, "", 15, TEXT);
+            title = text(c, "", 15, c.getColor(R.color.text));
             title.setMaxLines(2);
             title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            sub = text(c, "", 12, TEXT_DIM);
+            sub = text(c, "", 12, c.getColor(R.color.text_dim));
             sub.setSingleLine(true);
             sub.setEllipsize(android.text.TextUtils.TruncateAt.END);
             texts.addView(title);
@@ -165,7 +174,7 @@ public final class Ui {
             LayoutParams lp = new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
             lp.setMarginStart(dp(c, 12));
             addView(texts, lp);
-            trailing = text(c, "", 12, TEXT_DIM);
+            trailing = text(c, "", 12, c.getColor(R.color.text_dim));
             addView(trailing);
         }
 

@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Light palette; values-night/colors.xml holds the dark one. -->
     <color name="amber">#F2A516</color>
+    <color name="accent">#A35F00</color>
+    <color name="blue">#2D6CC0</color>
+    <color name="bg">#F4F4F7</color>
+    <color name="nav">#FFFFFF</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_high">#ECECF1</color>
+    <color name="text">#18181C</color>
+    <color name="text_dim">#5C5C66</color>
+    <color name="divider">#D8D8DF</color>
     <color name="amber_dim">#33F2A516</color>
-    <color name="bg">#101013</color>
-    <color name="surface">#1A1A1F</color>
-    <color name="surface_high">#24242B</color>
-    <color name="text">#F1F1F3</color>
-    <color name="text_dim">#9A9AA5</color>
-    <color name="divider">#2C2C34</color>
     <color name="controls_bg">#8C0E0E11</color>
 </resources>

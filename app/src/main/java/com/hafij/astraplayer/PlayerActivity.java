@@ -126,6 +126,13 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         c.startActivity(new Intent(c, PlayerActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP));
     }
 
+    /** The player stays dark whatever the app theme is. */
+    @Override
+    protected void attachBaseContext(Context base) {
+        super.attachBaseContext(base);
+        Ui.applyTheme(this, Prefs.THEME_DARK);
+    }
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -586,7 +593,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
             badgeAb.setVisibility(View.GONE);
         }
         findViewById(R.id.btn_ab).setAlpha(a >= 0 ? 1f : 0.85f);
-        ((ImageButton) findViewById(R.id.btn_ab)).setImageTintList(android.content.res.ColorStateList.valueOf(a >= 0 ? Ui.AMBER : 0xCCF1F1F3));
+        ((ImageButton) findViewById(R.id.btn_ab)).setImageTintList(android.content.res.ColorStateList.valueOf(a >= 0 ? getColor(R.color.accent) : 0xCCF1F1F3));
     }
 
     // ---- controls visibility --------------------------------------------------------------
@@ -622,7 +629,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
     private void setLocked(boolean l) {
         locked = l;
         btnLock.setImageResource(l ? R.drawable.ic_lock : R.drawable.ic_unlock);
-        btnLock.setImageTintList(android.content.res.ColorStateList.valueOf(l ? Ui.AMBER : Ui.TEXT));
+        btnLock.setImageTintList(android.content.res.ColorStateList.valueOf(l ? getColor(R.color.accent) : getColor(R.color.text)));
         info(l ? "Controls locked" : "Controls unlocked");
         showControls(true);
     }
@@ -941,9 +948,9 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         MediaPlayer p = service.player();
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        TextView value = Ui.text(this, "", 28, Ui.AMBER);
+        TextView value = Ui.text(this, "", 28, getColor(R.color.accent));
         value.setGravity(Gravity.CENTER);
-        TextView hint = Ui.text(this, subtitles ? "Positive = subtitles appear later" : "Positive = sound plays later", 12, Ui.TEXT_DIM);
+        TextView hint = Ui.text(this, subtitles ? "Positive = subtitles appear later" : "Positive = sound plays later", 12, getColor(R.color.text_dim));
         hint.setGravity(Gravity.CENTER);
         Runnable show = () -> value.setText(delayText(subtitles ? p.getSpuDelay() : p.getAudioDelay()));
         show.run();
@@ -981,13 +988,13 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         android.widget.Spinner bg = spinner(Prefs.SUB_BG_NAMES, prefs.subBg());
         android.widget.CheckBox bold = new android.widget.CheckBox(this);
         bold.setText("Bold");
-        bold.setTextColor(Ui.TEXT);
+        bold.setTextColor(getColor(R.color.text));
         bold.setChecked(prefs.subBold());
-        box.addView(Ui.text(this, "Size", 12, Ui.TEXT_DIM));
+        box.addView(Ui.text(this, "Size", 12, getColor(R.color.text_dim)));
         box.addView(size);
-        box.addView(Ui.text(this, "Colour", 12, Ui.TEXT_DIM));
+        box.addView(Ui.text(this, "Colour", 12, getColor(R.color.text_dim)));
         box.addView(color);
-        box.addView(Ui.text(this, "Background", 12, Ui.TEXT_DIM));
+        box.addView(Ui.text(this, "Background", 12, getColor(R.color.text_dim)));
         box.addView(bg);
         box.addView(bold);
         Ui.dialog(this).setTitle("Subtitle style").setView(Ui.padded(this, box))
@@ -1040,15 +1047,15 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         if (service == null) return;
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        TextView value = Ui.text(this, "", 28, Ui.AMBER);
+        TextView value = Ui.text(this, "", 28, getColor(R.color.accent));
         value.setGravity(Gravity.CENTER);
-        TextView hint = Ui.text(this, "Pitch is kept natural at every speed", 12, Ui.TEXT_DIM);
+        TextView hint = Ui.text(this, "Pitch is kept natural at every speed", 12, getColor(R.color.text_dim));
         hint.setGravity(Gravity.CENTER);
         SeekBar bar = new SeekBar(this);
         bar.setMax(75); // 0.25 .. 4.00 in 0.05 steps
         bar.setProgress(Math.round((service.rate() - 0.25f) / 0.05f));
-        bar.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.AMBER));
-        bar.setThumbTintList(android.content.res.ColorStateList.valueOf(Ui.AMBER));
+        bar.setProgressTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.accent)));
+        bar.setThumbTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.accent)));
         value.setText(String.format(Locale.ROOT, "%.2f×", service.rate()));
         bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
