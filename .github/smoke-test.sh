@@ -12,7 +12,7 @@ adb install -r apks/app-x86_64-debug.apk || exit 1
 adb shell appops set "$PKG" MANAGE_EXTERNAL_STORAGE allow
 adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS || true
 adb shell mkdir -p /sdcard/Movies/Smoke /sdcard/Music/Smoke
-adb push "media/Smoke video.mp4" "media/Smoke video.srt" "media/Old clip.avi" /sdcard/Movies/Smoke/
+adb push "media/Smoke video.mp4" "media/Smoke video.srt" "media/Old clip.avi" "media/Long GOP.mp4" /sdcard/Movies/Smoke/
 adb push "media/Smoke song.mp3" /sdcard/Music/Smoke/
 adb logcat -c
 
@@ -36,6 +36,11 @@ sleep 2
 shot 03b-seek-preview
 adb shell input motionevent UP $((W*3/4)) $((H/2))
 sleep 3
+# Start of a long-GOP clip: frames must be clean from the first second (no grey blocks).
+adb shell am start -W -a android.intent.action.VIEW -t video/mp4 \
+  -d "file:///sdcard/Movies/Smoke/Long%20GOP.mp4" -n "$PKG/.PlayerActivity"
+sleep 2; shot 03c-long-gop-start
+sleep 2; shot 03d-long-gop-4s
 adb shell am start -W -a android.intent.action.VIEW -t video/avi \
   -d "file:///sdcard/Movies/Smoke/Old%20clip.avi" -n "$PKG/.PlayerActivity"
 sleep 10

@@ -85,6 +85,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
     private ProgressBar loading;
 
     private boolean attached;
+    private boolean videoTrackOff;
     private boolean started;
     private boolean controlsVisible = true;
     private boolean locked;
@@ -113,11 +114,13 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         public void onServiceConnected(ComponentName name, IBinder binder) {
             service = ((PlaybackService.LocalBinder) binder).service();
             service.addListener(PlayerActivity.this);
+            // Attach the surface before starting, so decoding begins on a keyframe with it.
+            if (started) attachVideo();
             if (pendingQueue != null) {
+                if (!attached) service.expectView();
                 service.playQueue(pendingQueue, pendingIndex);
                 pendingQueue = null;
             }
-            if (started) attachVideo();
             refreshAll();
         }
 
@@ -159,6 +162,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         setIntent(intent);
         handleIntent(intent);
         if (pendingQueue != null && service != null) {
+            if (!attached) service.expectView();
             service.playQueue(pendingQueue, pendingIndex);
             pendingQueue = null;
         }
@@ -422,18 +426,29 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         if (service == null || attached) return;
         MediaPlayer p = service.player();
         p.attachViews(videoLayout, null, true, false);
-        p.setVideoTrackEnabled(true);
         p.setVideoScale(SCALES[scaleIndex]);
         attached = true;
+        service.setViewAttached(true);
+        if (videoTrackOff) {
+            // Back from background: turn video on and seek in place, so the demuxer restarts
+            // at a keyframe instead of decoding from the middle of a GOP.
+            videoTrackOff = false;
+            p.setVideoTrackEnabled(true);
+            if (p.isSeekable()) p.setTime(p.getTime());
+        }
     }
 
     private void detachVideo() {
         if (service == null || !attached) return;
         MediaPlayer p = service.player();
         // Without a surface libVLC would stall decoding video; turn the track off so audio keeps going.
-        if (p.getVideoTracksCount() > 0) p.setVideoTrackEnabled(false);
+        if (p.getVideoTracksCount() > 0) {
+            p.setVideoTrackEnabled(false);
+            videoTrackOff = true;
+        }
         p.detachViews();
         attached = false;
+        service.setViewAttached(false);
     }
 
     @Override

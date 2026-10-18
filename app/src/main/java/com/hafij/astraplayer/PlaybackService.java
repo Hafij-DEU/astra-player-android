@@ -124,6 +124,9 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
     private boolean pausedByFocusLoss;
     private boolean bufferedOnce;
     private boolean pauseOnStart;
+    private boolean viewWanted;
+    private boolean viewAttached;
+    private boolean startPending;
     private long lastAbJump;
     private static volatile boolean fontsPreparing;
 
@@ -484,8 +487,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         configure(m, item, true);
         player.setMedia(m);
         m.release();
-        player.play();
-        afterStart();
+        begin(item);
     }
 
     private void startMedia(Uri uri, String audioSlave, MediaItem item, boolean resumable) {
@@ -503,8 +505,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         configure(m, item, resumable);
         player.setMedia(m);
         m.release();
-        player.play();
-        afterStart();
+        begin(item);
     }
 
     private void configure(Media m, MediaItem item, boolean resumable) {
@@ -514,6 +515,52 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
             if (pos > 5000) {
                 m.addOption(":start-time=" + (pos / 1000.0));
                 main.postDelayed(() -> each(l -> l.onInfo("Resumed at " + MediaFiles.formatTime(pos))), 400);
+            }
+        }
+    }
+
+    /**
+     * Starts playback, unless a player screen is about to attach its video surface: starting
+     * without it makes the hardware decoder restart mid-GOP when the surface arrives, which
+     * shows grey blocks until the next keyframe (seconds, for phone and WhatsApp videos).
+     */
+    private void begin(MediaItem item) {
+        boolean needsSurface = !MediaFiles.isAudio(item.title);
+        if (needsSurface && viewWanted && !viewAttached) {
+            startPending = true;
+            main.removeCallbacks(pendingFallback);
+            main.postDelayed(pendingFallback, 2000);
+            each(Listener::onStateChanged);
+            return;
+        }
+        player.play();
+        afterStart();
+    }
+
+    private final Runnable pendingFallback = () -> {
+        if (startPending) {
+            startPending = false;
+            viewWanted = false;
+            player.play();
+            afterStart();
+        }
+    };
+
+    /** Call right before opening the player screen, so playback waits for its surface. */
+    public void expectView() {
+        viewWanted = true;
+    }
+
+    /** The player screen attached (true) or detached (false) its video surface. */
+    public void setViewAttached(boolean attached) {
+        viewAttached = attached;
+        if (attached) {
+            viewWanted = false;
+            if (startPending) {
+                startPending = false;
+                main.removeCallbacks(pendingFallback);
+                player.play();
+                afterStart();
             }
         }
     }

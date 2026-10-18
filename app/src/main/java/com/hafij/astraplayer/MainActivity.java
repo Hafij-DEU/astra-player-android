@@ -556,6 +556,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         if (items.isEmpty()) return;
         PlaybackService.start(this);
         if (service != null) {
+            service.expectView();
             service.playQueue(items, start);
             PlayerActivity.open(this);
         } else {
@@ -571,6 +572,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
             return;
         }
         boolean was = service.current() != null;
+        if (!was) service.expectView();
         service.enqueue(items);
         Ui.toast(this, items.size() == 1 ? "Added to queue" : items.size() + " items added to queue");
         if (!was) PlayerActivity.open(this);

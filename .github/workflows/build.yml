@@ -59,6 +59,8 @@ jobs:
           ffmpeg -v error -f lavfi -i testsrc2=size=640x360:rate=25 -f lavfi -i sine=frequency=440 -t 20 -c:v libx264 -pix_fmt yuv420p -c:a aac "media/Smoke video.mp4"
           ffmpeg -v error -f lavfi -i testsrc=size=320x240:rate=25 -f lavfi -i sine=frequency=300 -t 10 -c:v msmpeg4v2 -c:a mp3 "media/Old clip.avi"
           ffmpeg -v error -f lavfi -i sine=frequency=660 -t 15 -c:a libmp3lame "media/Smoke song.mp3"
+          # Phone-style clip: one keyframe every 12 s, so a decoder restart mid-GOP shows as grey blocks.
+          ffmpeg -v error -f lavfi -i testsrc2=size=720x1280:rate=30 -f lavfi -i sine=frequency=500 -t 30 -c:v libx264 -g 360 -keyint_min 360 -sc_threshold 0 -bf 2 -pix_fmt yuv420p -c:a aac "media/Long GOP.mp4"
           printf '1\n00:00:01,000 --> 00:00:15,000\nSmoke test subtitle\n' > "media/Smoke video.srt"
 
       - name: Run on emulator
