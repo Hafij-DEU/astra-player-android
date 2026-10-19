@@ -37,6 +37,7 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
@@ -124,6 +125,9 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
     private boolean pausedByFocusLoss;
     private boolean bufferedOnce;
     private boolean pauseOnStart;
+    private boolean playingCached;
+    private boolean currentLive;
+    private final java.util.Set<String> autoCached = new java.util.HashSet<>();
     private boolean viewWanted;
     private boolean viewAttached;
     private boolean startPending;
@@ -408,6 +412,8 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         sawStream = false;
         errorShown = false;
         bufferedOnce = false;
+        playingCached = false;
+        currentLive = false;
         lengthMs = item.durationMs;
         abA = abB = -1;
         player.stop();
@@ -430,6 +436,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
                         currentArtist = r.uploader + (r.quality == null ? "" : " · " + r.quality);
                         currentArt = art;
                         if (r.durationMs > 0) lengthMs = r.durationMs;
+                        currentLive = r.live;
                         startMedia(Uri.parse(r.videoUrl), r.audioUrl, item, !r.live);
                     });
                 } catch (Exception e) {
@@ -476,6 +483,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         YouTubeCache.Entry e = st.get(id);
         if (e == null) return false;
         resolving = false;
+        playingCached = true;
         if (e.title != null && !e.title.isEmpty()) currentTitle = e.title;
         currentArtist = (e.uploader == null || e.uploader.isEmpty() ? "" : e.uploader + " · ")
                 + "Offline " + (e.height > 0 ? e.height + "p" : "audio");
@@ -486,6 +494,17 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         Log.i(TAG, "playing cached " + id + " (" + e.height + "p)");
         startMedia(Uri.fromFile(st.videoFile(e)), audio == null ? null : Uri.fromFile(audio).toString(), item, true);
         return true;
+    }
+
+    /** Auto-cache "every video I watch": queue the streamed YouTube video once it plays. */
+    private void autoCacheCurrent() {
+        MediaItem item = current;
+        if (item == null || item.kind != MediaItem.YOUTUBE || playingCached || currentLive) return;
+        if (prefs.autoCache() != Prefs.AUTO_CACHE_WATCHED) return;
+        String id = YouTubeCache.videoId(item.uri);
+        if (id == null || !autoCached.add(id)) return;
+        CacheService.enqueue(this, Collections.singletonList(
+                new MediaItem(item.uri, currentTitle, MediaItem.YOUTUBE, item.subtitle, item.thumb, lengthMs)), prefs.cacheHeight());
     }
 
     private static String youtubeMessage(Exception e) {
@@ -785,7 +804,10 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
                     pauseOnStart = false;
                     main.postDelayed(this::pause, 300);
                 }
-                if (event.type == MediaPlayer.Event.Playing) startForegroundCompat();
+                if (event.type == MediaPlayer.Event.Playing) {
+                    startForegroundCompat();
+                    autoCacheCurrent();
+                }
                 else saveResume();
                 each(Listener::onStateChanged);
                 updateSession();

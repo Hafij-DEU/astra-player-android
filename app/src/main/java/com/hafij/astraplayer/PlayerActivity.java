@@ -1200,12 +1200,14 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
                 case 4:
                     Ui.prompt(this, "Save queue as playlist", "Playlist name", service.currentTitle(), name -> {
                         playlists.save(name, service.queue());
+                        CacheService.onAddedToPlaylist(this, service.queue());
                         info("Saved playlist \"" + name + "\"");
                     });
                     break;
                 case 5:
                     if (service.current() != null) Ui.choosePlaylist(this, playlists, name -> {
                         playlists.append(name, Collections.singletonList(service.current()));
+                        CacheService.onAddedToPlaylist(this, Collections.singletonList(service.current()));
                         info("Added to \"" + name + "\"");
                     });
                     break;

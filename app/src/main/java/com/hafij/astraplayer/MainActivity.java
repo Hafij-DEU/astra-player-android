@@ -452,6 +452,27 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         settingsSection(box, "Offline cache (YouTube)", getColor(R.color.c_orange));
         cacheSettingsRow = settingsBase(box, R.drawable.ic_save, getColor(R.color.c_orange), "Cached videos", cacheSummary());
         cacheSettingsRow.setOnClickListener(v -> manageCache());
+        settingsRow(box, R.drawable.ic_movie, getColor(R.color.c_orange), "Cache quality",
+                "Up to " + prefs.cacheHeight() + "p (lower if a video has no such quality)", () -> {
+                    int cur = 0;
+                    for (int k = 0; k < Prefs.YT_QUALITY_VALUES.length; k++) if (Prefs.YT_QUALITY_VALUES[k] == prefs.cacheHeight()) cur = k;
+                    Ui.dialog(this).setTitle("Cache quality (max)").setSingleChoiceItems(Prefs.YT_QUALITY_NAMES, cur, (d, w) -> {
+                        prefs.setCacheHeight(Prefs.YT_QUALITY_VALUES[w]);
+                        d.dismiss();
+                        showTab(TAB_SETTINGS);
+                    }).show();
+                });
+        settingsRow(box, R.drawable.ic_save, getColor(R.color.c_green), "Auto-cache",
+                Prefs.AUTO_CACHE_NAMES[prefs.autoCache()], () ->
+                        Ui.dialog(this).setTitle("Auto-cache YouTube videos").setSingleChoiceItems(Prefs.AUTO_CACHE_NAMES, prefs.autoCache(), (d, w) -> {
+                            d.dismiss();
+                            Runnable apply = () -> {
+                                prefs.setAutoCache(w);
+                                showTab(TAB_SETTINGS);
+                            };
+                            if (w == Prefs.AUTO_CACHE_OFF) apply.run();
+                            else withCacheNotice(apply);
+                        }).show());
         settingsSwitch(box, R.drawable.ic_link, getColor(R.color.c_teal), "Cache on Wi-Fi only",
                 "Wait for an unmetered network before downloading", prefs.cacheWifiOnly(), prefs::setCacheWifiOnly);
         settingsRow(box, R.drawable.ic_close, getColor(R.color.c_rose), "Stop caching",
@@ -604,6 +625,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
     private void addToPlaylist(List<MediaItem> items) {
         Ui.choosePlaylist(this, playlists, name -> {
             playlists.append(name, items);
+            CacheService.onAddedToPlaylist(this, items);
             Ui.toast(this, "Added to \"" + name + "\"");
             if (tab == TAB_PLAYLISTS) showTab(TAB_PLAYLISTS);
         });
@@ -1608,6 +1630,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
             TextView save = Ui.button(this, "Save queue", false);
             save.setOnClickListener(v -> Ui.prompt(this, "Save queue as playlist", "Playlist name", "", name -> {
                 playlists.save(name, queue);
+                CacheService.onAddedToPlaylist(this, queue);
                 showTab(TAB_PLAYLISTS);
             }));
             bar.addView(save);
@@ -1881,22 +1904,20 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
             return;
         }
         Runnable pick = () -> {
-            int cur = 0;
-            for (int k = 0; k < Prefs.YT_QUALITY_VALUES.length; k++) if (Prefs.YT_QUALITY_VALUES[k] == prefs.cacheHeight()) cur = k;
-            String title = yt.size() == 1 ? "Cache for offline: quality" : "Cache " + yt.size() + " videos: quality";
-            Ui.dialog(this).setTitle(title).setSingleChoiceItems(Prefs.YT_QUALITY_NAMES, cur, (d, w) -> {
-                d.dismiss();
-                int h = Prefs.YT_QUALITY_VALUES[w];
-                prefs.setCacheHeight(h);
-                int added = CacheService.enqueue(this, yt, h);
-                if (added == 0) Ui.toast(this, "Already cached at " + h + "p");
-                else Ui.toast(this, "Caching " + added + (added == 1 ? " video" : " videos") + " at up to " + h + "p"
-                        + (prefs.cacheWifiOnly() ? " (on Wi-Fi)" : ""));
-                onCacheChanged();
-            }).setNegativeButton("Cancel", null).show();
+            int h = prefs.cacheHeight();
+            int added = CacheService.enqueue(this, yt, h);
+            if (added == 0) Ui.toast(this, "Already cached at " + h + "p");
+            else Ui.toast(this, "Caching " + added + (added == 1 ? " video" : " videos") + " at up to " + h + "p"
+                    + (prefs.cacheWifiOnly() ? " on Wi-Fi" : "") + " · change quality in Settings");
+            onCacheChanged();
         };
+        withCacheNotice(pick);
+    }
+
+    /** Shows the one-time offline-cache explanation, then runs {@code next}. */
+    private void withCacheNotice(Runnable next) {
         if (prefs.cacheNoticeShown()) {
-            pick.run();
+            next.run();
             return;
         }
         Ui.dialog(this).setTitle("Offline cache")
@@ -1906,7 +1927,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
                         + "Only cache videos you are allowed to keep offline; YouTube's terms apply.")
                 .setPositiveButton("Continue", (d, w) -> {
                     prefs.setCacheNoticeShown();
-                    pick.run();
+                    next.run();
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -1941,44 +1962,63 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         });
     }
 
-    /** Settings › Offline cache: every cached video with its size; delete some or all. */
+    /** Settings › Cached videos: each cached video with a delete button; tap a row to play it offline. */
     private void manageCache() {
         YouTubeCache st = CacheService.store(this);
-        List<YouTubeCache.Entry> all = st.all();
-        if (all.isEmpty()) {
+        final List<YouTubeCache.Entry> rows = st.all();
+        if (rows.isEmpty()) {
             Ui.dialog(this).setTitle("Offline cache")
-                    .setMessage("Nothing is cached. Open a playlist with YouTube videos and tap \"⬇ Cache offline\", or long-press a YouTube result.")
+                    .setMessage("Nothing is cached. Open a playlist with YouTube videos and tap \"⬇ Cache offline\", long-press a YouTube result, or turn on Auto-cache.")
                     .setPositiveButton("OK", null).show();
             return;
         }
-        String[] labels = new String[all.size()];
-        boolean[] checked = new boolean[all.size()];
-        for (int i = 0; i < labels.length; i++) {
-            YouTubeCache.Entry e = all.get(i);
-            labels[i] = (e.title == null ? e.id : e.title) + "  ·  " + (e.height > 0 ? e.height + "p" : "audio") + " · " + YouTubeCache.Entry.formatBytes(e.bytes);
-        }
-        Ui.dialog(this).setTitle("Offline cache · " + YouTubeCache.Entry.formatBytes(st.totalBytes()))
-                .setMultiChoiceItems(labels, checked, (d, w, on) -> checked[w] = on)
-                .setPositiveButton("Delete ticked", (d, w) -> {
-                    int n = 0;
-                    for (int i = 0; i < labels.length; i++) {
-                        if (!checked[i]) continue;
-                        CacheService.forget(this, all.get(i).id);
-                        if (st.delete(all.get(i).id)) n++;
-                    }
-                    Ui.toast(this, n == 0 ? "Nothing ticked" : "Deleted " + n + (n == 1 ? " video" : " videos"));
-                    onCacheChanged();
-                })
+        ListView list = listView();
+        final android.app.AlertDialog[] dialog = new android.app.AlertDialog[1];
+        final RowAdapter<YouTubeCache.Entry>[] adapter = new RowAdapter[1];
+        adapter[0] = new RowAdapter<>(rows, (row, e) -> {
+            File thumb = st.thumbFile(e);
+            if (thumb != null) row.setThumb(thumb.getAbsolutePath());
+            else row.setIcon(R.drawable.ic_save, getColor(R.color.c_orange));
+            row.title.setText(e.title == null ? e.id : e.title);
+            String ago = android.text.format.DateUtils.getRelativeTimeSpanString(e.cachedAt, System.currentTimeMillis(),
+                    android.text.format.DateUtils.MINUTE_IN_MILLIS, android.text.format.DateUtils.FORMAT_ABBREV_RELATIVE).toString();
+            row.sub.setText((e.height > 0 ? e.height + "p" : "audio") + " · " + YouTubeCache.Entry.formatBytes(e.bytes) + " · " + ago);
+            row.trailing.setText(e.durationMs > 0 ? MediaFiles.formatTime(e.durationMs) : "");
+            row.setMore(v -> {
+                CacheService.forget(this, e.id);
+                st.delete(e.id);
+                rows.remove(e);
+                adapter[0].notifyDataSetChanged();
+                Ui.toast(this, "Deleted offline copy");
+                if (dialog[0] != null) dialog[0].setTitle(cacheManagerTitle(st, rows.size()));
+                if (rows.isEmpty() && dialog[0] != null) dialog[0].dismiss();
+                onCacheChanged();
+            });
+            row.more.setImageResource(R.drawable.ic_delete);
+            row.more.setContentDescription("Delete offline copy");
+        });
+        list.setAdapter(adapter[0]);
+        list.setOnItemClickListener((p, v, pos, id) -> {
+            YouTubeCache.Entry e = rows.get(pos);
+            if (dialog[0] != null) dialog[0].dismiss();
+            play(Collections.singletonList(new MediaItem(e.url, e.title, MediaItem.YOUTUBE, e.uploader, e.thumbUrl, e.durationMs)), 0);
+        });
+        list.setMinimumHeight(dp(360));
+        dialog[0] = Ui.dialog(this).setTitle(cacheManagerTitle(st, rows.size())).setView(list)
                 .setNeutralButton("Delete all", (d, w) -> Ui.confirm(this, "Delete all offline copies?",
-                        all.size() + (all.size() == 1 ? " video" : " videos") + " (" + YouTubeCache.Entry.formatBytes(st.totalBytes()) + ") will be removed.",
+                        rows.size() + (rows.size() == 1 ? " video" : " videos") + " (" + YouTubeCache.Entry.formatBytes(st.totalBytes()) + ") will be removed.",
                         "Delete all", () -> {
                             CacheService.cancelAll(this);
                             int n = st.deleteAll();
                             Ui.toast(this, "Deleted " + n + (n == 1 ? " video" : " videos"));
                             onCacheChanged();
                         }))
-                .setNegativeButton("Close", null)
+                .setPositiveButton("Close", null)
                 .show();
+    }
+
+    private static String cacheManagerTitle(YouTubeCache st, int n) {
+        return "Offline cache · " + n + (n == 1 ? " video · " : " videos · ") + YouTubeCache.Entry.formatBytes(st.totalBytes());
     }
 
     private void updateCacheStatus() {
@@ -2035,6 +2075,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
                     String name = ip.name;
                     for (int k = 2; playlists.get(name) != null; k++) name = ip.name + " (" + k + ")";
                     playlists.save(name, ip.items);
+                    CacheService.onAddedToPlaylist(this, ip.items);
                     Ui.toast(this, "Imported " + ip.items.size() + " videos" + (ip.truncated ? " (first 500)" : ""));
                     openPlaylist = name;
                     showTab(TAB_PLAYLISTS);

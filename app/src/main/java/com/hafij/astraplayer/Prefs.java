@@ -125,6 +125,13 @@ public final class Prefs {
     public int cacheHeight() { return sp.getInt("cache_height", 720); }
     public void setCacheHeight(int v) { sp.edit().putInt("cache_height", v).apply(); }
 
+    public static final int AUTO_CACHE_OFF = 0, AUTO_CACHE_PLAYLISTS = 1, AUTO_CACHE_WATCHED = 2;
+    public static final String[] AUTO_CACHE_NAMES = {"Off", "YouTube videos added to playlists", "Every YouTube video I watch"};
+
+    /** Caches YouTube videos without asking, at cacheHeight(). */
+    public int autoCache() { return sp.getInt("auto_cache", AUTO_CACHE_OFF); }
+    public void setAutoCache(int v) { sp.edit().putInt("auto_cache", v).apply(); }
+
     /** The one-time explanation before the first cache. */
     public boolean cacheNoticeShown() { return sp.getBoolean("cache_notice", false); }
     public void setCacheNoticeShown() { sp.edit().putBoolean("cache_notice", true).apply(); }
