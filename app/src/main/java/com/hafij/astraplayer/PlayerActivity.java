@@ -1196,7 +1196,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
             CacheService.Job job = CacheService.job(vid);
             boolean caching = job != null && (job.state == CacheService.QUEUED || job.state == CacheService.RUNNING);
             if (cached) menu.add(0, 17, 0, "Delete offline copy");
-            else menu.add(0, 16, 0, caching ? "Caching for offline…" : "Cache for offline (" + prefs.cacheHeight() + "p)").setEnabled(!caching);
+            else menu.add(0, 16, 0, caching ? "Caching for offline…" : "Cache for offline (" + prefs.effectiveCacheHeight() + "p)").setEnabled(!caching);
         }
         m.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
@@ -1403,7 +1403,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
             pm.getMenu().add(0, 1, 0, "Play next");
             pm.getMenu().add(0, 2, 0, "Add to queue");
             pm.getMenu().add(0, 3, 0, "Add to playlist…");
-            pm.getMenu().add(0, 4, 0, "Cache for offline (" + prefs.cacheHeight() + "p)");
+            pm.getMenu().add(0, 4, 0, "Cache for offline (" + prefs.effectiveCacheHeight() + "p)");
             pm.setOnMenuItemClickListener(it -> {
                 switch (it.getItemId()) {
                     case 1: service.playNext(Collections.singletonList(m)); info("Plays next"); break;
@@ -1438,8 +1438,8 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
 
     private void cacheItems(List<MediaItem> items) {
         Runnable go = () -> {
-            int added = CacheService.enqueue(this, items, prefs.cacheHeight());
-            info(added == 0 ? "Already cached" : "Caching at up to " + prefs.cacheHeight() + "p" + (prefs.cacheWifiOnly() ? " (Wi-Fi)" : ""));
+            int added = CacheService.enqueue(this, items, prefs.effectiveCacheHeight());
+            info(added == 0 ? "Already cached" : "Caching at up to " + prefs.effectiveCacheHeight() + "p" + (prefs.cacheWifiOnly() ? " (Wi-Fi)" : ""));
         };
         if (prefs.cacheNoticeShown()) {
             go.run();

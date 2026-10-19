@@ -122,7 +122,7 @@ public class CacheService extends Service {
     /** Auto-cache: queue YouTube videos just added to a playlist, if the user turned that on. */
     public static void onAddedToPlaylist(Context c, List<MediaItem> items) {
         Prefs p = new Prefs(c);
-        if (p.autoCache() == Prefs.AUTO_CACHE_PLAYLISTS) enqueue(c, items, p.cacheHeight());
+        if (p.autoCache() == Prefs.AUTO_CACHE_PLAYLISTS) enqueue(c, items, p.effectiveCacheHeight());
     }
 
     public static Job job(String id) {

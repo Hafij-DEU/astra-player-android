@@ -122,7 +122,19 @@ public final class Prefs {
     public void setCacheWifiOnly(boolean v) { sp.edit().putBoolean("cache_wifi_only", v).apply(); }
 
     /** Last resolution picked for caching, offered first next time. */
-    public int cacheHeight() { return sp.getInt("cache_height", 720); }
+    /** Cache quality setting: 0 = Auto (the same as the YouTube streaming quality). */
+    public int cacheHeight() { return sp.getInt("cache_height_v2", 0); }
+
+    /** The height caches are made at: the cache setting, or the streaming quality for Auto. */
+    public int effectiveCacheHeight() {
+        int h = cacheHeight();
+        return h > 0 ? h : ytQuality();
+    }
+
+    /** "Auto (1080p, same as streaming)" or "720p". */
+    public String cacheHeightLabel() {
+        return cacheHeight() > 0 ? cacheHeight() + "p" : "Auto (" + ytQuality() + "p, same as streaming)";
+    }
     public void setCacheHeight(int v) { sp.edit().putInt("cache_height", v).apply(); }
 
     public static final int AUTO_CACHE_OFF = 0, AUTO_CACHE_PLAYLISTS = 1, AUTO_CACHE_WATCHED = 2;

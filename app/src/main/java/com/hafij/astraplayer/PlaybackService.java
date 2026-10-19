@@ -445,7 +445,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
             updateSession();
             final int quality = prefs.ytQuality();
             final String vid = YouTubeCache.videoId(item.uri);
-            final int cacheHeight = wantCacheWhilePlaying(vid) ? prefs.cacheHeight() : 0;
+            final int cacheHeight = wantCacheWhilePlaying(vid) ? prefs.effectiveCacheHeight() : 0;
             worker.execute(() -> {
                 try {
                     YouTube.Resolved r = YouTube.resolve(item.uri, quality, false, cacheHeight);
@@ -570,7 +570,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         String id = YouTubeCache.videoId(item.uri);
         if (id == null || !autoCached.add(id)) return;
         CacheService.enqueue(this, Collections.singletonList(
-                new MediaItem(item.uri, currentTitle, MediaItem.YOUTUBE, item.subtitle, item.thumb, lengthMs)), prefs.cacheHeight());
+                new MediaItem(item.uri, currentTitle, MediaItem.YOUTUBE, item.subtitle, item.thumb, lengthMs)), prefs.effectiveCacheHeight());
     }
 
     // ---- cache while playing --------------------------------------------------------------
@@ -582,6 +582,9 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
     /** Auto-cache "while playing" is on, the network is allowed, and nobody else is caching it. */
     private boolean wantCacheWhilePlaying(String vid) {
         if (vid == null || prefs.autoCache() != Prefs.AUTO_CACHE_WATCHED) return false;
+        // One download only works when the cached copy is the stream being watched. With a
+        // different cache quality the stream plays normally and a background download caches it.
+        if (prefs.effectiveCacheHeight() != prefs.ytQuality()) return false;
         if (prefs.cacheWifiOnly() && !unmeteredNetwork()) return false;
         // The background cache owns the files while it has the video queued or running.
         CacheService.Job j = CacheService.job(vid);

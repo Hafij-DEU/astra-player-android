@@ -459,11 +459,14 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         cacheSettingsRow = settingsBase(box, R.drawable.ic_save, getColor(R.color.c_orange), "Cached videos", cacheSummary());
         cacheSettingsRow.setOnClickListener(v -> manageCache());
         settingsRow(box, R.drawable.ic_movie, getColor(R.color.c_orange), "Cache quality",
-                "Up to " + prefs.cacheHeight() + "p (lower if a video has no such quality)", () -> {
+                prefs.cacheHeightLabel() + " · lower if a video has no such quality", () -> {
+                    String[] names = new String[Prefs.YT_QUALITY_NAMES.length + 1];
+                    names[0] = "Auto (same as streaming quality)";
+                    System.arraycopy(Prefs.YT_QUALITY_NAMES, 0, names, 1, Prefs.YT_QUALITY_NAMES.length);
                     int cur = 0;
-                    for (int k = 0; k < Prefs.YT_QUALITY_VALUES.length; k++) if (Prefs.YT_QUALITY_VALUES[k] == prefs.cacheHeight()) cur = k;
-                    Ui.dialog(this).setTitle("Cache quality (max)").setSingleChoiceItems(Prefs.YT_QUALITY_NAMES, cur, (d, w) -> {
-                        prefs.setCacheHeight(Prefs.YT_QUALITY_VALUES[w]);
+                    for (int k = 0; k < Prefs.YT_QUALITY_VALUES.length; k++) if (Prefs.YT_QUALITY_VALUES[k] == prefs.cacheHeight()) cur = k + 1;
+                    Ui.dialog(this).setTitle("Cache quality (max)").setSingleChoiceItems(names, cur, (d, w) -> {
+                        prefs.setCacheHeight(w == 0 ? 0 : Prefs.YT_QUALITY_VALUES[w - 1]);
                         d.dismiss();
                         showTab(TAB_SETTINGS);
                     }).show();
@@ -2011,7 +2014,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
             return;
         }
         Runnable pick = () -> {
-            int h = prefs.cacheHeight();
+            int h = prefs.effectiveCacheHeight();
             int added = CacheService.enqueue(this, yt, h);
             if (added == 0) Ui.toast(this, "Already cached at " + h + "p");
             else Ui.toast(this, "Caching " + added + (added == 1 ? " video" : " videos") + " at up to " + h + "p"
