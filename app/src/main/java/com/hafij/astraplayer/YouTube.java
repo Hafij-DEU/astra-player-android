@@ -2,6 +2,7 @@ package com.hafij.astraplayer;
 
 import org.schabi.newpipe.extractor.Image;
 import org.schabi.newpipe.extractor.InfoItem;
+import org.schabi.newpipe.extractor.MediaFormat;
 import org.schabi.newpipe.extractor.ListExtractor;
 import org.schabi.newpipe.extractor.NewPipe;
 import org.schabi.newpipe.extractor.Page;
@@ -10,7 +11,9 @@ import org.schabi.newpipe.extractor.downloader.Downloader;
 import org.schabi.newpipe.extractor.downloader.Request;
 import org.schabi.newpipe.extractor.downloader.Response;
 import org.schabi.newpipe.extractor.search.SearchExtractor;
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo;
 import org.schabi.newpipe.extractor.stream.AudioStream;
+import org.schabi.newpipe.extractor.stream.DeliveryMethod;
 import org.schabi.newpipe.extractor.stream.StreamInfo;
 import org.schabi.newpipe.extractor.stream.StreamInfoItem;
 import org.schabi.newpipe.extractor.stream.StreamType;
@@ -72,6 +75,124 @@ public final class YouTube {
         ex.fetchPage();
         ListExtractor.InfoItemsPage<InfoItem> page = ex.getInitialPage();
         return new Results(convert(page.getItems()), ex, page.hasNextPage() ? page.getNextPage() : null);
+    }
+
+    /**
+     * True for a link to a playlist page. A watch link that only carries list= (a video
+     * played inside a playlist) is a single video.
+     */
+    public static boolean isPlaylistUrl(String url) {
+        if (!isYouTubeUrl(url) || !url.contains("list=")) return false;
+        String u = url.toLowerCase(Locale.ROOT);
+        return u.contains("/playlist") || (!u.contains("v=") && !u.contains("youtu.be/"));
+    }
+
+    /** A YouTube playlist fetched for saving as an Astra playlist. */
+    public static final class ImportedPlaylist {
+        public final String name;
+        public final List<MediaItem> items;
+        /** True when the playlist had more than the requested maximum. */
+        public final boolean truncated;
+
+        ImportedPlaylist(String name, List<MediaItem> items, boolean truncated) {
+            this.name = name;
+            this.items = items;
+            this.truncated = truncated;
+        }
+    }
+
+    public static ImportedPlaylist importPlaylist(String url, int max) throws Exception {
+        init();
+        PlaylistInfo info = PlaylistInfo.getInfo(ServiceList.YouTube, url);
+        List<MediaItem> items = new ArrayList<>(convert(new ArrayList<InfoItem>(info.getRelatedItems())));
+        Page next = info.hasNextPage() ? info.getNextPage() : null;
+        while (next != null && items.size() < max) {
+            ListExtractor.InfoItemsPage<StreamInfoItem> page = PlaylistInfo.getMoreItems(ServiceList.YouTube, url, next);
+            items.addAll(convert(new ArrayList<InfoItem>(page.getItems())));
+            next = page.hasNextPage() ? page.getNextPage() : null;
+        }
+        boolean truncated = next != null || items.size() > max;
+        while (items.size() > max) items.remove(items.size() - 1);
+        String name = info.getName() == null || info.getName().isEmpty() ? "YouTube playlist" : info.getName();
+        return new ImportedPlaylist(name, items, truncated);
+    }
+
+    /** Download sources for caching one video offline. */
+    public static final class CacheSource {
+        public final String title;
+        public final String uploader;
+        public final String thumb;
+        public final long durationMs;
+        public final String videoUrl;
+        public final String videoExt;
+        public final int height;
+        /** Separate audio stream, or null when the video stream already has sound. */
+        public final String audioUrl;
+        public final String audioExt;
+
+        CacheSource(String title, String uploader, String thumb, long durationMs, String videoUrl, String videoExt,
+                    int height, String audioUrl, String audioExt) {
+            this.title = title;
+            this.uploader = uploader;
+            this.thumb = thumb;
+            this.durationMs = durationMs;
+            this.videoUrl = videoUrl;
+            this.videoExt = videoExt;
+            this.height = height;
+            this.audioUrl = audioUrl;
+            this.audioExt = audioExt;
+        }
+    }
+
+    /**
+     * Picks single-file streams for caching at no more than {@code maxHeight}: the best
+     * video-only stream plus the best audio stream, or a muxed stream when split streams are
+     * missing. Live streams cannot be cached.
+     */
+    public static CacheSource resolveForCache(String pageUrl, int maxHeight) throws Exception {
+        init();
+        StreamInfo info = StreamInfo.getInfo(ServiceList.YouTube, pageUrl);
+        StreamType type = info.getStreamType();
+        if (type == StreamType.LIVE_STREAM || type == StreamType.AUDIO_LIVE_STREAM) {
+            throw new IOException("Live streams cannot be cached");
+        }
+        String title = info.getName();
+        String uploader = info.getUploaderName();
+        String thumb = bestThumb(info.getThumbnails());
+        long dur = Math.max(0, info.getDuration()) * 1000L;
+        VideoStream video = pickVideo(info.getVideoOnlyStreams(), maxHeight, true);
+        AudioStream audio = pickAudio(info.getAudioStreams(), true);
+        if (video != null && audio != null) {
+            return new CacheSource(title, uploader, thumb, dur, video.getContent(), suffix(video, "mp4"),
+                    heightOf(video), audio.getContent(), suffix(audio, "m4a"));
+        }
+        VideoStream muxed = null;
+        for (VideoStream v : info.getVideoStreams()) {
+            if (!v.isUrl() || v.getDeliveryMethod() != DeliveryMethod.PROGRESSIVE_HTTP) continue;
+            // Best stream within maxHeight; if none fits, the smallest one.
+            if (muxed == null) {
+                muxed = v;
+                continue;
+            }
+            boolean vFits = heightOf(v) <= maxHeight, mFits = heightOf(muxed) <= maxHeight;
+            if (vFits && (!mFits || heightOf(v) > heightOf(muxed))) muxed = v;
+            else if (!vFits && !mFits && heightOf(v) < heightOf(muxed)) muxed = v;
+        }
+        if (muxed != null) {
+            return new CacheSource(title, uploader, thumb, dur, muxed.getContent(), suffix(muxed, "mp4"),
+                    heightOf(muxed), null, null);
+        }
+        throw new IOException("No downloadable stream found for this video");
+    }
+
+    private static int heightOf(VideoStream v) {
+        return v.getHeight() > 0 ? v.getHeight() : parseHeight(v.getResolution());
+    }
+
+    private static String suffix(org.schabi.newpipe.extractor.stream.Stream s, String fallback) {
+        MediaFormat f = s.getFormat();
+        String x = f == null ? null : f.getSuffix();
+        return x == null || x.isEmpty() ? fallback : x;
     }
 
     public static Results more(Results prev) throws Exception {
@@ -171,10 +292,16 @@ public final class YouTube {
     }
 
     private static VideoStream pickVideo(List<VideoStream> streams, int maxHeight) {
+        return pickVideo(streams, maxHeight, false);
+    }
+
+    /** @param progressiveOnly true for caching: only single-file HTTP streams can be downloaded. */
+    private static VideoStream pickVideo(List<VideoStream> streams, int maxHeight, boolean progressiveOnly) {
         VideoStream best = null;
         int bestScore = Integer.MIN_VALUE;
         for (VideoStream v : streams) {
             if (!v.isUrl()) continue;
+            if (progressiveOnly && v.getDeliveryMethod() != DeliveryMethod.PROGRESSIVE_HTTP) continue;
             String codec = v.getCodec() == null ? "" : v.getCodec().toLowerCase(Locale.ROOT);
             if (codec.startsWith("av01")) continue; // few phones decode AV1 in hardware
             int h = v.getHeight();
@@ -205,10 +332,15 @@ public final class YouTube {
     }
 
     private static AudioStream pickAudio(List<AudioStream> streams) {
+        return pickAudio(streams, false);
+    }
+
+    private static AudioStream pickAudio(List<AudioStream> streams, boolean progressiveOnly) {
         AudioStream best = null;
         int bestScore = Integer.MIN_VALUE;
         for (AudioStream a : streams) {
             if (!a.isUrl()) continue;
+            if (progressiveOnly && a.getDeliveryMethod() != DeliveryMethod.PROGRESSIVE_HTTP) continue;
             // Skip dubbed or descriptive tracks when the original is available.
             String type = a.getAudioTrackType() == null ? "" : a.getAudioTrackType().name();
             int score = a.getAverageBitrate();

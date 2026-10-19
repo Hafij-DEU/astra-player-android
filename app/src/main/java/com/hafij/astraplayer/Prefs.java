@@ -117,6 +117,18 @@ public final class Prefs {
     public boolean oneHand() { return sp.getBoolean("one_hand", true); }
     public void setOneHand(boolean v) { sp.edit().putBoolean("one_hand", v).apply(); }
 
+    /** Offline cache: only download on unmetered networks (Wi-Fi). */
+    public boolean cacheWifiOnly() { return sp.getBoolean("cache_wifi_only", true); }
+    public void setCacheWifiOnly(boolean v) { sp.edit().putBoolean("cache_wifi_only", v).apply(); }
+
+    /** Last resolution picked for caching, offered first next time. */
+    public int cacheHeight() { return sp.getInt("cache_height", 720); }
+    public void setCacheHeight(int v) { sp.edit().putInt("cache_height", v).apply(); }
+
+    /** The one-time explanation before the first cache. */
+    public boolean cacheNoticeShown() { return sp.getBoolean("cache_notice", false); }
+    public void setCacheNoticeShown() { sp.edit().putBoolean("cache_notice", true).apply(); }
+
     public int sortMode() { return sp.getInt("sort_mode", SORT_NAME); }
     public boolean sortDescending() { return sp.getBoolean("sort_desc", false); }
     public void setSort(int mode, boolean descending) {

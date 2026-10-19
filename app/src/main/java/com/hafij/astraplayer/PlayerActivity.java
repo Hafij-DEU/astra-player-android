@@ -1273,7 +1273,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         }
         if (!it.savingAllowed()) {
             Ui.dialog(this).setTitle("Recording is off for YouTube")
-                    .setMessage("YouTube's terms of service do not allow saving videos outside YouTube, so Astra Player does not record or download them.")
+                    .setMessage("Astra Player does not record or export YouTube videos to files. To watch one offline, long-press it (or open its playlist) and choose \"Cache for offline\": Astra keeps a private copy inside the app.")
                     .setPositiveButton("OK", null).show();
             return;
         }

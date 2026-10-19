@@ -293,11 +293,16 @@ public final class Ui {
         THUMBS.execute(() -> {
             Bitmap b = null;
             try {
-                HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-                c.setConnectTimeout(8000);
-                c.setReadTimeout(8000);
-                try (InputStream in = c.getInputStream()) {
-                    b = BitmapFactory.decodeStream(in);
+                if (url.startsWith("/")) {
+                    // A thumbnail saved with an offline copy.
+                    b = BitmapFactory.decodeFile(url);
+                } else {
+                    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                    c.setConnectTimeout(8000);
+                    c.setReadTimeout(8000);
+                    try (InputStream in = c.getInputStream()) {
+                        b = BitmapFactory.decodeStream(in);
+                    }
                 }
             } catch (Exception ignored) {
             }

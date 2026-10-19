@@ -413,6 +413,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         player.stop();
         closeFd();
         each(l -> l.onItemChanged(item));
+        if (item.kind == MediaItem.YOUTUBE && playCached(item)) return;
         if (item.kind == MediaItem.YOUTUBE) {
             resolving = true;
             each(Listener::onStateChanged);
@@ -465,6 +466,26 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         } catch (Exception e) {
             fail(item, "Cannot open", String.valueOf(e.getMessage()));
         }
+    }
+
+    /** Plays a YouTube item from the offline cache when a complete copy exists; no network needed. */
+    private boolean playCached(MediaItem item) {
+        String id = YouTubeCache.videoId(item.uri);
+        if (id == null) return false;
+        YouTubeCache st = CacheService.store(this);
+        YouTubeCache.Entry e = st.get(id);
+        if (e == null) return false;
+        resolving = false;
+        if (e.title != null && !e.title.isEmpty()) currentTitle = e.title;
+        currentArtist = (e.uploader == null || e.uploader.isEmpty() ? "" : e.uploader + " · ")
+                + "Offline " + (e.height > 0 ? e.height + "p" : "audio");
+        File thumb = st.thumbFile(e);
+        currentArt = thumb == null ? null : BitmapFactory.decodeFile(thumb.getPath());
+        if (e.durationMs > 0) lengthMs = e.durationMs;
+        File audio = st.audioFile(e);
+        Log.i(TAG, "playing cached " + id + " (" + e.height + "p)");
+        startMedia(Uri.fromFile(st.videoFile(e)), audio == null ? null : Uri.fromFile(audio).toString(), item, true);
+        return true;
     }
 
     private static String youtubeMessage(Exception e) {
