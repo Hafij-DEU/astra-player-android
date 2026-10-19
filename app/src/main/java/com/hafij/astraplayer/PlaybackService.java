@@ -421,6 +421,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
 
     private void load(MediaItem item) {
         stopProxy(player.getTime());
+        prefs.setLastPlayed(item);
         final int token = ++loadToken;
         current = item;
         currentTitle = item.title;

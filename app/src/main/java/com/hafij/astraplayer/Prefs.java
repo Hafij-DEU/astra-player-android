@@ -188,6 +188,21 @@ public final class Prefs {
         sp.edit().putString(key, new JSONArray(new ArrayList<>(new TreeSet<>(values))).toString()).apply();
     }
 
+    /** The item played most recently, for the Files tab's Continue button. */
+    public MediaItem lastPlayed() {
+        String json = sp.getString("last_played", null);
+        if (json == null) return null;
+        try {
+            return MediaItem.fromJson(new org.json.JSONObject(json));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public void setLastPlayed(MediaItem item) {
+        sp.edit().putString("last_played", item == null ? null : item.toJson().toString()).apply();
+    }
+
     public boolean fontsReady() { return sp.getBoolean("fonts_ready", false); }
     public void setFontsReady() { sp.edit().putBoolean("fonts_ready", true).apply(); }
 
