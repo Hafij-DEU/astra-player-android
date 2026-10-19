@@ -151,7 +151,10 @@ public final class YouTube {
      */
     public static CacheSource resolveForCache(String pageUrl, int maxHeight) throws Exception {
         init();
-        StreamInfo info = StreamInfo.getInfo(ServiceList.YouTube, pageUrl);
+        return cacheSourceFrom(StreamInfo.getInfo(ServiceList.YouTube, pageUrl), maxHeight);
+    }
+
+    private static CacheSource cacheSourceFrom(StreamInfo info, int maxHeight) throws Exception {
         StreamType type = info.getStreamType();
         if (type == StreamType.LIVE_STREAM || type == StreamType.AUDIO_LIVE_STREAM) {
             throw new IOException("Live streams cannot be cached");
@@ -243,6 +246,11 @@ public final class YouTube {
         public final long durationMs;
         public final String quality;
 
+        /** Related videos YouTube suggests (empty when unavailable). */
+        public List<MediaItem> related = new ArrayList<>();
+        /** Streams for caching while playing, or null. */
+        public CacheSource cache;
+
         Resolved(String title, String uploader, String thumb, String videoUrl, String audioUrl, boolean live, long durationMs, String quality) {
             this.title = title;
             this.uploader = uploader;
@@ -256,8 +264,44 @@ public final class YouTube {
     }
 
     public static Resolved resolve(String pageUrl, int maxHeight, boolean audioOnly) throws Exception {
+        return resolve(pageUrl, maxHeight, audioOnly, 0);
+    }
+
+    /**
+     * @param cacheHeight when above 0, also picks single-file streams at that height for
+     *                    caching while playing ({@link Resolved#cache}, null when not possible).
+     */
+    public static Resolved resolve(String pageUrl, int maxHeight, boolean audioOnly, int cacheHeight) throws Exception {
         init();
         StreamInfo info = StreamInfo.getInfo(ServiceList.YouTube, pageUrl);
+        Resolved r = resolveFrom(info, maxHeight, audioOnly);
+        r.related = relatedOf(info);
+        if (cacheHeight > 0 && !r.live) {
+            try {
+                r.cache = cacheSourceFrom(info, cacheHeight);
+            } catch (Exception ignored) {
+                // No downloadable streams: just stream it.
+            }
+        }
+        return r;
+    }
+
+    /** "Up next" videos YouTube suggests for a video (needs network). */
+    public static List<MediaItem> related(String pageUrl) throws Exception {
+        init();
+        return relatedOf(StreamInfo.getInfo(ServiceList.YouTube, pageUrl));
+    }
+
+    private static List<MediaItem> relatedOf(StreamInfo info) {
+        try {
+            List<InfoItem> items = info.getRelatedItems();
+            return items == null ? new ArrayList<>() : convert(new ArrayList<>(items));
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
+    }
+
+    private static Resolved resolveFrom(StreamInfo info, int maxHeight, boolean audioOnly) throws Exception {
         String title = info.getName();
         String uploader = info.getUploaderName();
         String thumb = bestThumb(info.getThumbnails());

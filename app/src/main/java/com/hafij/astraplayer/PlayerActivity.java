@@ -250,6 +250,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         findViewById(R.id.btn_shot).setOnClickListener(v -> screenshot());
         btnPip.setOnClickListener(v -> enterPip());
         btnPip.setVisibility(supportsPip() ? View.VISIBLE : View.GONE);
+        findViewById(R.id.btn_related).setOnClickListener(v -> showRelated());
         btnLock.setOnClickListener(v -> setLocked(!locked));
         badgeRec.setOnClickListener(v -> { if (service != null) service.stopRecording(); });
         badgeAb.setOnClickListener(v -> { if (service != null) service.clearAb(); refreshBadges(); });
@@ -566,6 +567,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         subtitle.setText(pos + (item.subtitle == null ? "" : item.subtitle));
         updateAudioPanel();
         refreshBadges();
+        findViewById(R.id.btn_related).setVisibility(item.kind == MediaItem.YOUTUBE ? View.VISIBLE : View.GONE);
     }
 
     @Override
@@ -1186,6 +1188,16 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         menu.add(0, 12, 0, "Hardware decoding").setCheckable(true).setChecked(prefs.hwDecoding());
         menu.add(0, 13, 0, "Resume where I left off").setCheckable(true).setChecked(prefs.resumeEnabled());
         menu.add(0, 14, 0, "Keyboard shortcuts");
+        MediaItem playing = service.current();
+        if (playing != null && playing.kind == MediaItem.YOUTUBE) {
+            menu.add(0, 15, 0, "Related videos");
+            String vid = YouTubeCache.videoId(playing.uri);
+            boolean cached = vid != null && CacheService.store(this).get(vid) != null;
+            CacheService.Job job = CacheService.job(vid);
+            boolean caching = job != null && (job.state == CacheService.QUEUED || job.state == CacheService.RUNNING);
+            if (cached) menu.add(0, 17, 0, "Delete offline copy");
+            else menu.add(0, 16, 0, caching ? "Caching for offline…" : "Cache for offline (" + prefs.cacheHeight() + "p)").setEnabled(!caching);
+        }
         m.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
                 case 1: queueDialog(); break;
@@ -1240,6 +1252,15 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
                     break;
                 case 13: prefs.setResumeEnabled(!prefs.resumeEnabled()); break;
                 case 14: shortcutsDialog(); break;
+                case 15: showRelated(); break;
+                case 16: cacheCurrent(); break;
+                case 17: {
+                    String vid = YouTubeCache.videoId(service.current().uri);
+                    CacheService.forget(this, vid);
+                    CacheService.store(this).delete(vid);
+                    info("Offline copy deleted");
+                    break;
+                }
                 default: break;
             }
             return true;
@@ -1320,6 +1341,120 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         } catch (Exception e) {
             info("Download failed: " + e.getMessage());
         }
+    }
+
+    @Override
+    public void onRelatedChanged() {
+        if (relatedAdapter != null && service != null) {
+            relatedItems.clear();
+            relatedItems.addAll(service.related());
+            relatedAdapter.notifyDataSetChanged();
+        }
+    }
+
+    private final List<MediaItem> relatedItems = new ArrayList<>();
+    private android.widget.BaseAdapter relatedAdapter;
+
+    /** YouTube's suggestions for the current video: tap to play, long-press for more. */
+    private void showRelated() {
+        if (service == null) return;
+        relatedItems.clear();
+        relatedItems.addAll(service.related());
+        android.widget.ListView list = new android.widget.ListView(this);
+        list.setDivider(null);
+        list.setDividerHeight(Ui.dp(this, 6));
+        list.setPadding(Ui.dp(this, 8), Ui.dp(this, 4), Ui.dp(this, 8), Ui.dp(this, 4));
+        list.setClipToPadding(false);
+        relatedAdapter = new android.widget.BaseAdapter() {
+            @Override public int getCount() { return relatedItems.size(); }
+            @Override public Object getItem(int i) { return relatedItems.get(i); }
+            @Override public long getItemId(int i) { return i; }
+
+            @Override
+            public View getView(int i, View convert, ViewGroup parent) {
+                Ui.Row row = convert instanceof Ui.Row ? (Ui.Row) convert : new Ui.Row(PlayerActivity.this);
+                MediaItem m = relatedItems.get(i);
+                if (m.thumb != null) row.setThumb(m.thumb);
+                else row.setIcon(R.drawable.ic_play, getColor(R.color.accent));
+                row.title.setText(m.title);
+                String vid = YouTubeCache.videoId(m.uri);
+                boolean cached = vid != null && CacheService.store(PlayerActivity.this).get(vid) != null;
+                row.sub.setText(m.subtitle + (cached ? "  ·  ⬇ offline" : ""));
+                row.trailing.setText(m.durationMs > 0 ? MediaFiles.formatTime(m.durationMs) : "");
+                return row;
+            }
+        };
+        list.setAdapter(relatedAdapter);
+        TextView empty = Ui.text(this, "Loading suggestions… (needs a connection)", 14, getColor(R.color.text_dim));
+        empty.setPadding(Ui.dp(this, 20), Ui.dp(this, 20), Ui.dp(this, 20), Ui.dp(this, 20));
+        FrameLayout frame = new FrameLayout(this);
+        frame.addView(list);
+        frame.addView(empty);
+        list.setEmptyView(empty);
+        android.app.AlertDialog d = Ui.dialog(this).setTitle("Related videos").setView(frame)
+                .setPositiveButton("Close", null).create();
+        list.setOnItemClickListener((p, v, pos, id) -> {
+            d.dismiss();
+            service.playNow(relatedItems.get(pos));
+        });
+        list.setOnItemLongClickListener((p, v, pos, id) -> {
+            MediaItem m = relatedItems.get(pos);
+            PopupMenu pm = new PopupMenu(this, v, Gravity.END);
+            pm.getMenu().add(0, 1, 0, "Play next");
+            pm.getMenu().add(0, 2, 0, "Add to queue");
+            pm.getMenu().add(0, 3, 0, "Add to playlist…");
+            pm.getMenu().add(0, 4, 0, "Cache for offline (" + prefs.cacheHeight() + "p)");
+            pm.setOnMenuItemClickListener(it -> {
+                switch (it.getItemId()) {
+                    case 1: service.playNext(Collections.singletonList(m)); info("Plays next"); break;
+                    case 2: service.enqueue(Collections.singletonList(m)); info("Added to queue"); break;
+                    case 3:
+                        Ui.choosePlaylist(this, playlists, name -> {
+                            playlists.append(name, Collections.singletonList(m));
+                            CacheService.onAddedToPlaylist(this, Collections.singletonList(m));
+                            info("Added to \"" + name + "\"");
+                        });
+                        break;
+                    default: cacheItems(Collections.singletonList(m)); break;
+                }
+                return true;
+            });
+            pm.show();
+            return true;
+        });
+        d.setOnDismissListener(x -> relatedAdapter = null);
+        d.show();
+        if (d.getWindow() != null) d.getWindow().setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - Ui.dp(this, 24), Ui.dp(this, 560)),
+                (int) (getResources().getDisplayMetrics().heightPixels * 0.8f));
+    }
+
+    /** Caches the current YouTube video at the Settings quality while it plays. */
+    private void cacheCurrent() {
+        if (service == null || service.current() == null) return;
+        MediaItem cur = service.current();
+        cacheItems(Collections.singletonList(new MediaItem(cur.uri, service.currentTitle(), MediaItem.YOUTUBE,
+                cur.subtitle, cur.thumb, service.length())));
+    }
+
+    private void cacheItems(List<MediaItem> items) {
+        Runnable go = () -> {
+            int added = CacheService.enqueue(this, items, prefs.cacheHeight());
+            info(added == 0 ? "Already cached" : "Caching at up to " + prefs.cacheHeight() + "p" + (prefs.cacheWifiOnly() ? " (Wi-Fi)" : ""));
+        };
+        if (prefs.cacheNoticeShown()) {
+            go.run();
+            return;
+        }
+        Ui.dialog(this).setTitle("Offline cache")
+                .setMessage("Astra keeps a private copy inside the app, so you can watch later without streaming. "
+                        + "Copies are not saved to your gallery, cannot be shared and are removed with the app. "
+                        + "Only cache videos you are allowed to keep offline; YouTube's terms apply.")
+                .setPositiveButton("Continue", (d, w) -> {
+                    prefs.setCacheNoticeShown();
+                    go.run();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void shortcutsDialog() {

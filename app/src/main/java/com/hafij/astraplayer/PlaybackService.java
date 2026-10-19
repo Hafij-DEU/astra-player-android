@@ -78,6 +78,8 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         default void onVideoOutput(boolean hasVideo) {}
         /** libVLC was re-created (subtitle style change); views must be attached again. */
         default void onEngineRestarted() {}
+        /** Related YouTube videos for the current item arrived. */
+        default void onRelatedChanged() {}
     }
 
     public final class LocalBinder extends Binder {
@@ -126,6 +128,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
     private boolean bufferedOnce;
     private boolean pauseOnStart;
     private boolean playingCached;
+    private List<MediaItem> related = new ArrayList<>();
     private boolean currentLive;
     private final java.util.Set<String> autoCached = new java.util.HashSet<>();
     private boolean viewWanted;
@@ -248,6 +251,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
 
     @Override
     public void onDestroy() {
+        stopProxy(player.getTime());
         saveResume();
         if (recording) player.record(null);
         player.setEventListener(null);
@@ -279,6 +283,9 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
 
     public MediaPlayer player() { return player; }
     public MediaItem current() { return current; }
+    public List<MediaItem> related() { return new ArrayList<>(related); }
+    /** True while the current YouTube video plays from the offline cache. */
+    public boolean playingCached() { return playingCached; }
     public String currentTitle() { return currentTitle; }
     public List<MediaItem> queue() { return new ArrayList<>(queue); }
     public int index() { return index; }
@@ -306,6 +313,16 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         queue.addAll(items);
         if (current == null && !queue.isEmpty()) playIndex(queue.size() - items.size());
         each(l -> l.onItemChanged(current));
+    }
+
+    /** Plays an item now, keeping the rest of the queue after it. */
+    public void playNow(MediaItem item) {
+        if (current == null || index < 0) {
+            playQueue(java.util.Collections.singletonList(item), 0);
+            return;
+        }
+        queue.add(index + 1, item);
+        playIndex(index + 1);
     }
 
     /** Inserts items right after the current one. */
@@ -403,6 +420,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
     // ---- loading --------------------------------------------------------------------------
 
     private void load(MediaItem item) {
+        stopProxy(player.getTime());
         final int token = ++loadToken;
         current = item;
         currentTitle = item.title;
@@ -414,6 +432,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         bufferedOnce = false;
         playingCached = false;
         currentLive = false;
+        related = new ArrayList<>();
         lengthMs = item.durationMs;
         abA = abB = -1;
         player.stop();
@@ -425,19 +444,53 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
             each(Listener::onStateChanged);
             updateSession();
             final int quality = prefs.ytQuality();
+            final String vid = YouTubeCache.videoId(item.uri);
+            final int cacheHeight = wantCacheWhilePlaying(vid) ? prefs.cacheHeight() : 0;
             worker.execute(() -> {
                 try {
-                    YouTube.Resolved r = YouTube.resolve(item.uri, quality, false);
+                    YouTube.Resolved r = YouTube.resolve(item.uri, quality, false, cacheHeight);
                     Bitmap art = item.thumb != null || r.thumb != null ? download(r.thumb != null ? r.thumb : item.thumb) : null;
+                    // Cache while playing: stream through the local proxy that saves the video.
+                    StreamCacheProxy px = null;
+                    String[] local = null;
+                    if (r.cache != null && vid != null) {
+                        try {
+                            px = makeProxy(item, vid, r.cache);
+                            local = px.start();
+                        } catch (Exception e) {
+                            Log.w(TAG, "cache while playing unavailable, streaming", e);
+                            px = null;
+                            local = null;
+                        }
+                    }
+                    final StreamCacheProxy fpx = px;
+                    final String[] flocal = local;
                     main.post(() -> {
-                        if (token != loadToken) return;
+                        if (token != loadToken) {
+                            if (fpx != null) fpx.stop();
+                            return;
+                        }
                         resolving = false;
                         currentTitle = r.title;
                         currentArtist = r.uploader + (r.quality == null ? "" : " · " + r.quality);
                         currentArt = art;
                         if (r.durationMs > 0) lengthMs = r.durationMs;
                         currentLive = r.live;
-                        startMedia(Uri.parse(r.videoUrl), r.audioUrl, item, !r.live);
+                        related = r.related;
+                        each(Listener::onRelatedChanged);
+                        if (token != loadToken) {
+                            if (fpx != null) fpx.stop();
+                            return;
+                        }
+                        if (fpx != null) {
+                            proxy = fpx;
+                            proxyItem = item;
+                            proxyHeight = r.cache.height;
+                            currentArtist = r.uploader + " · " + r.cache.height + "p · saving offline";
+                            startMedia(Uri.parse(flocal[0]), flocal[1], item, true);
+                        } else {
+                            startMedia(Uri.parse(r.videoUrl), r.audioUrl, item, !r.live);
+                        }
                     });
                 } catch (Exception e) {
                     Log.w(TAG, "YouTube resolve failed", e);
@@ -492,6 +545,19 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         if (e.durationMs > 0) lengthMs = e.durationMs;
         File audio = st.audioFile(e);
         Log.i(TAG, "playing cached " + id + " (" + e.height + "p)");
+        // Suggestions need the network; fetch them quietly and skip when offline.
+        final int token = loadToken;
+        worker.execute(() -> {
+            try {
+                List<MediaItem> rel = YouTube.related(item.uri);
+                main.post(() -> {
+                    if (token != loadToken) return;
+                    related = rel;
+                    each(Listener::onRelatedChanged);
+                });
+            } catch (Exception ignored) {
+            }
+        });
         startMedia(Uri.fromFile(st.videoFile(e)), audio == null ? null : Uri.fromFile(audio).toString(), item, true);
         return true;
     }
@@ -499,12 +565,71 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
     /** Auto-cache "every video I watch": queue the streamed YouTube video once it plays. */
     private void autoCacheCurrent() {
         MediaItem item = current;
-        if (item == null || item.kind != MediaItem.YOUTUBE || playingCached || currentLive) return;
+        if (item == null || item.kind != MediaItem.YOUTUBE || playingCached || currentLive || proxy != null) return;
         if (prefs.autoCache() != Prefs.AUTO_CACHE_WATCHED) return;
         String id = YouTubeCache.videoId(item.uri);
         if (id == null || !autoCached.add(id)) return;
         CacheService.enqueue(this, Collections.singletonList(
                 new MediaItem(item.uri, currentTitle, MediaItem.YOUTUBE, item.subtitle, item.thumb, lengthMs)), prefs.cacheHeight());
+    }
+
+    // ---- cache while playing --------------------------------------------------------------
+
+    private StreamCacheProxy proxy;
+    private MediaItem proxyItem;
+    private int proxyHeight;
+
+    /** Auto-cache "while playing" is on, the network is allowed, and nobody else is caching it. */
+    private boolean wantCacheWhilePlaying(String vid) {
+        if (vid == null || prefs.autoCache() != Prefs.AUTO_CACHE_WATCHED) return false;
+        if (prefs.cacheWifiOnly() && !unmeteredNetwork()) return false;
+        // The background cache owns the files while it has the video queued or running.
+        CacheService.Job j = CacheService.job(vid);
+        return j == null || (j.state != CacheService.RUNNING && j.state != CacheService.QUEUED);
+    }
+
+    private boolean unmeteredNetwork() {
+        android.net.ConnectivityManager cm = getSystemService(android.net.ConnectivityManager.class);
+        if (cm == null) return false;
+        android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(cm.getActiveNetwork());
+        return caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
+    }
+
+    private StreamCacheProxy makeProxy(MediaItem item, String vid, YouTube.CacheSource src) {
+        YouTubeCache st = CacheService.store(this);
+        File dir = st.dir(vid);
+        final StreamCacheProxy[] self = new StreamCacheProxy[1];
+        self[0] = new StreamCacheProxy(vid, dir, src, () -> YouTube.resolveForCache(item.uri, src.height),
+                () -> {
+                    // Runs on a download thread once both streams are on disk.
+                    try {
+                        CacheService.saveEntry(st, vid, item.uri, src, dir);
+                        main.post(() -> {
+                            each(l -> l.onInfo("Saved for offline"));
+                            CacheService.notifyChanged();
+                        });
+                    } catch (Exception e) {
+                        Log.w(TAG, "saving cached copy failed", e);
+                    }
+                });
+        return self[0];
+    }
+
+    /**
+     * Stops the proxy of the previous item. If the user watched at least a minute (or half of
+     * a short video), the rest is downloaded in the background so the copy is completed.
+     */
+    private void stopProxy(long watchedMs) {
+        StreamCacheProxy px = proxy;
+        if (px == null) return;
+        proxy = null;
+        px.stop();
+        long len = length();
+        if (!px.complete() && proxyItem != null && (watchedMs >= 60000 || (len > 0 && watchedMs >= len / 2))) {
+            CacheService.enqueue(this, Collections.singletonList(new MediaItem(proxyItem.uri, currentTitle,
+                    MediaItem.YOUTUBE, proxyItem.subtitle, proxyItem.thumb, len)), proxyHeight);
+        }
+        proxyItem = null;
     }
 
     private static String youtubeMessage(Exception e) {
@@ -666,6 +791,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
     }
 
     public void stopPlayback() {
+        stopProxy(player.getTime());
         saveResume();
         stopRecording();
         player.stop();

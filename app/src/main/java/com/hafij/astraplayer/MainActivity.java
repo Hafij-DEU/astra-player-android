@@ -91,6 +91,9 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
     private String filesQuery = "";
     // Playlists tab: null = overview, otherwise the open playlist
     private String openPlaylist;
+    /** The automatic "Offline videos" playlist is open. */
+    private boolean openOffline;
+    private int offlineShown = -1;
     // YouTube tab state survives tab switches
     private String ytQuery = "";
     private final List<MediaItem> ytResults = new ArrayList<>();
@@ -260,7 +263,10 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
             t.addView(tv);
             final int idx = i;
             t.setOnClickListener(v -> {
-                if (idx == TAB_PLAYLISTS && tab == TAB_PLAYLISTS) openPlaylist = null;
+                if (idx == TAB_PLAYLISTS && tab == TAB_PLAYLISTS) {
+                    openPlaylist = null;
+                    openOffline = false;
+                }
                 showTab(idx);
             });
             nav.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -1614,6 +1620,7 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
     private View buildPlaylists() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
+        if (openOffline) return buildOfflinePlaylist();
         if (openPlaylist != null) {
             PlaylistStore.Playlist p = playlists.get(openPlaylist);
             if (p != null) return buildPlaylistDetail(p);
@@ -1655,10 +1662,20 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         final boolean hasQueue = !queue.isEmpty();
         List<Object> rows = new ArrayList<>();
         if (hasQueue) rows.add("queue");
+        List<YouTubeCache.Entry> offlineEntries = CacheService.store(this).all();
+        offlineShown = offlineEntries.size();
+        if (!offlineEntries.isEmpty()) rows.add("offline");
         rows.addAll(all);
         ListView list = listView();
         RowAdapter<Object> overview = new RowAdapter<>(rows, (row, o) -> {
-            if (o instanceof String) {
+            if ("offline".equals(o)) {
+                row.setIcon(R.drawable.ic_save, getColor(R.color.c_orange));
+                row.title.setText("⬇ Offline videos");
+                long bytes = 0;
+                for (YouTubeCache.Entry e : offlineEntries) bytes += e.bytes;
+                row.sub.setText(offlineEntries.size() + (offlineEntries.size() == 1 ? " video" : " videos")
+                        + " · " + YouTubeCache.Entry.formatBytes(bytes) + " · plays without a connection");
+            } else if (o instanceof String) {
                 row.setIcon(R.drawable.ic_play, getColor(R.color.accent));
                 row.title.setText("Now playing queue");
                 row.sub.setText(queue.size() + (queue.size() == 1 ? " item · " : " items · ") + new String[]{"play once", "repeat file", "repeat all"}[service.repeatMode()] + (service.shuffle() ? " · shuffle" : ""));
@@ -1676,7 +1693,10 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         cacheAdapter = overview;
         list.setOnItemClickListener((parent, v, pos, id) -> {
             Object o = rows.get(pos);
-            if (o instanceof String) PlayerActivity.open(this);
+            if ("offline".equals(o)) {
+                openOffline = true;
+                showTab(TAB_PLAYLISTS);
+            } else if (o instanceof String) PlayerActivity.open(this);
             else {
                 openPlaylist = ((PlaylistStore.Playlist) o).name;
                 showTab(TAB_PLAYLISTS);
@@ -1714,6 +1734,93 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
             return true;
         });
         if (rows.isEmpty()) box.addView(emptyText("No playlists yet.\nLong-press a file, folder or YouTube result and choose \"Add to playlist\", or save the queue from the player menu."));
+        box.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        return box;
+    }
+
+    /** Every cached YouTube video, newest first, as an automatic playlist. */
+    private View buildOfflinePlaylist() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        YouTubeCache st = CacheService.store(this);
+        List<YouTubeCache.Entry> entries = st.all();
+        offlineShown = entries.size();
+        final List<MediaItem> items = new ArrayList<>();
+        for (YouTubeCache.Entry e : entries) {
+            items.add(new MediaItem(e.url, e.title, MediaItem.YOUTUBE, e.uploader == null ? "" : e.uploader, e.thumbUrl, e.durationMs));
+        }
+        LinearLayout bar = new LinearLayout(this);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(8), 0, dp(12), dp(8));
+        ImageButton back = iconButton(R.drawable.ic_back, "Back");
+        back.setOnClickListener(v -> { openOffline = false; showTab(TAB_PLAYLISTS); });
+        bar.addView(back);
+        LinearLayout names = new LinearLayout(this);
+        names.setOrientation(LinearLayout.VERTICAL);
+        TextView name = Ui.text(this, "⬇ Offline videos", 17, getColor(R.color.c_orange));
+        name.setTypeface(Typeface.DEFAULT_BOLD);
+        names.addView(name);
+        names.addView(Ui.text(this, items.size() + (items.size() == 1 ? " video · " : " videos · ")
+                + YouTubeCache.Entry.formatBytes(st.totalBytes()), 12, getColor(R.color.text_dim)));
+        bar.addView(names, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        ImageButton manage = iconButton(R.drawable.ic_delete, "Manage offline copies");
+        manage.setOnClickListener(v -> manageCache());
+        bar.addView(manage);
+        box.addView(bar);
+
+        if (!items.isEmpty()) {
+            LinearLayout actions = new LinearLayout(this);
+            actions.setPadding(dp(14), 0, dp(14), dp(8));
+            TextView playAll = Ui.button(this, "▶ Play all", true);
+            playAll.setOnClickListener(v -> play(items, 0));
+            TextView shuffle = Ui.button(this, "Shuffle", false);
+            shuffle.setOnClickListener(v -> {
+                List<MediaItem> sh = new ArrayList<>(items);
+                Collections.shuffle(sh);
+                play(sh, 0);
+            });
+            TextView save = Ui.button(this, "Save as playlist", false);
+            save.setOnClickListener(v -> Ui.prompt(this, "Save as playlist", "Playlist name", "Offline videos", n -> {
+                playlists.save(n, items);
+                Ui.toast(this, "Saved \"" + n + "\"");
+            }));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+            lp.setMarginEnd(dp(6));
+            actions.addView(playAll, lp);
+            actions.addView(shuffle, new LinearLayout.LayoutParams(lp));
+            actions.addView(save, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            box.addView(actions);
+        }
+
+        ListView list = listView();
+        RowAdapter<MediaItem> adapter = new RowAdapter<>(items, this::bindMedia);
+        list.setAdapter(adapter);
+        cacheAdapter = adapter;
+        list.setOnItemClickListener((p, v, pos, id) -> play(items, pos));
+        list.setOnItemLongClickListener((p, v, pos, id) -> {
+            MediaItem m = items.get(pos);
+            PopupMenu pm = new PopupMenu(this, v, Gravity.END);
+            pm.getMenu().add(0, 1, 0, "Play from here");
+            pm.getMenu().add(0, 2, 0, "Add to queue");
+            pm.getMenu().add(0, 3, 0, "Add to playlist…");
+            pm.getMenu().add(0, 4, 0, "Delete offline copy");
+            pm.setOnMenuItemClickListener(it -> {
+                switch (it.getItemId()) {
+                    case 1: play(items, pos); break;
+                    case 2: enqueue(Collections.singletonList(m)); break;
+                    case 3: addToPlaylist(Collections.singletonList(m)); break;
+                    default:
+                        deleteCached(Collections.singletonList(m));
+                        Ui.toast(this, "Offline copy deleted");
+                        showTab(TAB_PLAYLISTS);
+                        break;
+                }
+                return true;
+            });
+            pm.show();
+            return true;
+        });
+        if (items.isEmpty()) box.addView(emptyText("No offline videos yet.\nCache a playlist, long-press a YouTube result, or turn on Auto-cache in Settings."));
         box.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         return box;
     }
@@ -2044,6 +2151,10 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
     /** A download started, moved on or ended: refresh visible rows without rebuilding. */
     private void onCacheChanged() {
         if (destroyed) return;
+        if (tab == TAB_PLAYLISTS && openPlaylist == null && offlineShown != CacheService.store(this).all().size()) {
+            showTab(TAB_PLAYLISTS);
+            return;
+        }
         if (cacheAdapter != null) cacheAdapter.notifyDataSetChanged();
         updateCacheStatus();
         if (tab == TAB_SETTINGS && cacheSettingsRow != null) cacheSettingsRow.sub.setText(cacheSummary());
@@ -2349,6 +2460,11 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
         if (tab == TAB_FILES && folder != null && hasStorageAccess()) {
             if (prefs.currentView() == Prefs.FILES_BROWSE) goUp();
             else closeVideoFolder();
+            return;
+        }
+        if (tab == TAB_PLAYLISTS && openOffline) {
+            openOffline = false;
+            showTab(TAB_PLAYLISTS);
             return;
         }
         if (tab == TAB_PLAYLISTS && openPlaylist != null) {

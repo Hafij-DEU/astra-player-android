@@ -349,6 +349,13 @@ public class CacheService extends Service {
     }
 
     private void cacheOne(YouTubeCache st, Job j) throws Exception {
+        // The player may be caching this video while it plays: let it finish first.
+        while (StreamCacheProxy.active(j.id)) {
+            if (CANCEL.get()) throw new ChunkedDownloader.CancelledException();
+            Thread.sleep(2000);
+        }
+        YouTubeCache.Entry existing = st.get(j.id);
+        if (existing != null && existing.height == j.maxHeight) return;
         waitForAllowedNetwork(j);
         YouTube.CacheSource src = YouTube.resolveForCache(j.url, j.maxHeight);
         File dir = st.dir(j.id);
@@ -445,6 +452,59 @@ public class CacheService extends Service {
         }
         j.done = e.bytes;
         j.total = e.bytes;
+    }
+
+    /** Public trigger for screens after something outside the service changed the cache. */
+    public static void notifyChanged() {
+        changed();
+    }
+
+    /**
+     * Writes the cache entry for streams already on disk (used by cache-while-playing):
+     * fetches the thumbnail, saves meta.json and removes files of an older copy.
+     */
+    static void saveEntry(YouTubeCache st, String id, String url, YouTube.CacheSource src, File dir) throws IOException {
+        String videoName = "v" + src.height + "." + src.videoExt;
+        String audioName = src.audioUrl == null ? null : "a." + src.audioExt;
+        File video = new File(dir, videoName);
+        File audio = audioName == null ? null : new File(dir, audioName);
+        String thumbName = null;
+        File thumb = new File(dir, "thumb.jpg");
+        if (src.thumb != null && (!thumb.exists() || thumb.length() == 0)) {
+            File part = new File(dir, "thumb.jpg.part");
+            part.delete();
+            try {
+                new ChunkedDownloader(YouTube.USER_AGENT).download(src.thumb, part, null, new AtomicBoolean(false));
+                if (!part.renameTo(thumb)) part.delete();
+            } catch (IOException e) {
+                part.delete();
+            }
+        }
+        if (thumb.exists() && thumb.length() > 0) thumbName = thumb.getName();
+        YouTubeCache.Entry e = new YouTubeCache.Entry();
+        e.id = id;
+        e.url = url;
+        e.title = src.title;
+        e.uploader = src.uploader;
+        e.thumbUrl = src.thumb;
+        e.durationMs = src.durationMs;
+        e.height = src.height;
+        e.videoFile = videoName;
+        e.audioFile = audioName;
+        e.thumbFile = thumbName;
+        e.bytes = video.length() + (audio == null ? 0 : audio.length());
+        e.cachedAt = System.currentTimeMillis();
+        e.complete = true;
+        st.save(e);
+        File[] files = dir.listFiles();
+        if (files != null) {
+            for (File f : files) {
+                String n = f.getName();
+                if (n.equals("meta.json") || n.equals(videoName) || n.equals(audioName) || n.equals(thumbName)) continue;
+                if (n.endsWith(".part") || n.endsWith(".total")) continue;
+                f.delete();
+            }
+        }
     }
 
     /** With "Wi-Fi only" on, waits while the network is metered or missing. */

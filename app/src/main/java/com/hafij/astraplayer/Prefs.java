@@ -126,7 +126,7 @@ public final class Prefs {
     public void setCacheHeight(int v) { sp.edit().putInt("cache_height", v).apply(); }
 
     public static final int AUTO_CACHE_OFF = 0, AUTO_CACHE_PLAYLISTS = 1, AUTO_CACHE_WATCHED = 2;
-    public static final String[] AUTO_CACHE_NAMES = {"Off", "YouTube videos added to playlists", "Every YouTube video I watch"};
+    public static final String[] AUTO_CACHE_NAMES = {"Off", "YouTube videos added to playlists", "Cache while playing (every YouTube video I watch)"};
 
     /** Caches YouTube videos without asking, at cacheHeight(). */
     public int autoCache() { return sp.getInt("auto_cache", AUTO_CACHE_OFF); }

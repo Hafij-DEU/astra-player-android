@@ -261,6 +261,13 @@
             android:visibility="gone" />
 
         <ImageButton
+            android:id="@+id/btn_related"
+            style="@style/PlayerIcon"
+            android:contentDescription="Related videos"
+            android:src="@drawable/ic_playlist"
+            android:visibility="gone" />
+
+        <ImageButton
             android:id="@+id/btn_shot"
             style="@style/PlayerIcon"
             android:contentDescription="Screenshot"
