@@ -397,16 +397,20 @@ public class MainActivity extends Activity implements PlaybackService.Listener {
             code = pi.getLongVersionCode();
         } catch (Exception ignored) {
         }
-        String text = "A free media player with no ads, no account and no subscription.\n\n"
-                + "Made by Md Hafijur Rahman (Hafij-DEU)\n"
+        String text = "A general-purpose media player for local files, playlists and network streams.\n\n"
+                + "Developed by Md. Hafijur Rahman\n"
                 + "Version " + v + " (build " + code + ")\n"
                 + "Android companion of Astra Player for Linux\n\n"
                 + "Source and releases:\nhttps://github.com/Hafij-DEU/astra-player-android\n"
                 + "Linux version:\nhttps://github.com/Hafij-DEU/video-player\n\n"
-                + "Playback: libVLC (LGPL 2.1+), VideoLAN.\n"
-                + "YouTube: NewPipeExtractor (GPL 3.0+), Team NewPipe.\n\n"
-                + "Astra Player is free software under the GNU GPL 3.0 or later. "
-                + "It is not affiliated with PotPlayer, VideoLAN, NewPipe or YouTube.";
+                + "Open-source licenses:\n"
+                + "libVLC (LGPL 2.1 or later), VideoLAN: playback.\n"
+                + "NewPipe Extractor (GPL 3.0), Team NewPipe: online video search and streams.\n"
+                + "Android Desugar JDK libs (GPL 2.0 with Classpath Exception), Google.\n\n"
+                + "License: Astra Player is free software under the GNU GPL 3.0 or later (see LICENSE in the repository). "
+                + "It is not affiliated with PotPlayer, VideoLAN, NewPipe or YouTube.\n\n"
+                + "Users are responsible for complying with the terms of service of the sites they use.\n\n"
+                + "This app was generated with AI. Developer support may not be available.";
         TextView t = Ui.text(this, text, 14, getColor(R.color.text));
         t.setLineSpacing(0, 1.15f);
         t.setLinkTextColor(getColor(R.color.accent));

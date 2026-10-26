@@ -1,6 +1,7 @@
 # Astra Player for Android
 
-A free media player for Android with no ads, no account and no subscription.
+A general-purpose media player for Android: local video and audio, playlists, network streams and subtitles.
+The app itself has no ads, no account and no subscription.
 It is the Android companion of [Astra Player for Linux](https://github.com/Hafij-DEU/video-player),
 with an amber accent and compact see-through controls at the bottom.
 
@@ -80,3 +81,6 @@ Astra Player for Android is free software under the GNU General Public License 3
 It uses [libVLC](https://www.videolan.org/vlc/libvlc.html) (LGPL 2.1+) and
 [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor) (GPL 3.0+).
 Astra Player is not affiliated with PotPlayer, VideoLAN, NewPipe or YouTube.
+
+Developed by Md. Hafijur Rahman. This app was generated with AI; developer support may not be available.
+Users are responsible for complying with the terms of service of the sites they use.
