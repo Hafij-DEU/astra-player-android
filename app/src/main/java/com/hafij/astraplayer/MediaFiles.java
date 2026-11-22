@@ -301,7 +301,7 @@ public final class MediaFiles {
 
     /**
      * External subtitles for a local video: files in the same folder (or a Subs/Subtitles
-     * sub-folder) whose name starts with the video's base name. When the folder holds exactly
+     * sub-folder) whose name starts with the video's base name (see matchesVideo). When the folder holds exactly
      * one video, every subtitle file there is taken.
      */
     public static List<File> findSubtitles(File video) {
@@ -328,10 +328,22 @@ public final class MediaFiles {
             String b = base(f.getName());
             // .idx/.sub pairs: libVLC wants only the .idx.
             if (ext(f.getName()).equals("sub") && new File(f.getParentFile(), f.getName().replaceAll("(?i)\\.sub$", ".idx")).exists()) continue;
-            if (b.startsWith(base) || videos == 1) out.add(f);
+            if (matchesVideo(b, base) || videos == 1) out.add(f);
         }
         out.sort((a, b) -> a.getName().compareToIgnoreCase(b.getName()));
         return out;
+    }
+
+    /**
+     * A subtitle base name belongs to a video when it starts with the video's base name, except
+     * when a number simply continues: "ep1" must not take "ep10" or "ep11", while "ep1.en",
+     * "ep1_tr", "ep1 english" and "movie.forced" still match.
+     */
+    static boolean matchesVideo(String subBase, String videoBase) {
+        if (!subBase.startsWith(videoBase)) return false;
+        if (subBase.length() == videoBase.length() || videoBase.isEmpty()) return true;
+        return !(Character.isDigit(videoBase.charAt(videoBase.length() - 1))
+                && Character.isDigit(subBase.charAt(videoBase.length())));
     }
 
     /** "Episode 2" sorts before "Episode 10". */

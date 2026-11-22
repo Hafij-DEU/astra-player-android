@@ -169,6 +169,7 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
         opts.add("--freetype-background-color=0");
         opts.add("--freetype-outline-thickness=" + (bg > 0 ? 0 : 4));
         if (prefs.subBold()) opts.add("--freetype-bold");
+        // Legacy 8-bit subtitle files are converted to UTF-8 copies first (SubtitleCharset).
         opts.add("--subsdec-encoding=UTF-8");
         if (BuildConfig.DEBUG) opts.add("-vv");
         vlc = new LibVLC(this, opts);
@@ -667,8 +668,11 @@ public class PlaybackService extends Service implements MediaPlayer.EventListene
             if (item.kind == MediaItem.YOUTUBE) m.addOption(":http-user-agent=" + YouTube.USER_AGENT);
         }
         if (item.isLocalPath()) {
+            File utf8Dir = new File(getCacheDir(), "subs-utf8");
             for (File s : MediaFiles.findSubtitles(new File(item.uri))) {
-                m.addSlave(new IMedia.Slave(IMedia.Slave.Type.Subtitle, 4, Uri.fromFile(s).toString()));
+                // Legacy-encoded (e.g. Turkish Windows-1254) files get a UTF-8 copy; others load as before.
+                File load = SubtitleCharset.forLibVlc(s, utf8Dir);
+                m.addSlave(new IMedia.Slave(IMedia.Slave.Type.Subtitle, 4, Uri.fromFile(load).toString()));
             }
         }
         configure(m, item, resumable);

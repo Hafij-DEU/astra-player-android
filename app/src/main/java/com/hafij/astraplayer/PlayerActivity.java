@@ -94,6 +94,9 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
     private int scaleIndex;
     private List<MediaItem> pendingQueue;
     private int pendingIndex;
+    /** Content-provider queries and file copies; providers like Drive or USB can block for seconds. */
+    private final java.util.concurrent.ExecutorService io = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private int intentGeneration;
 
     // Gesture state
     private int gestureMode; // 0 none, 1 seek, 2 brightness, 3 volume
@@ -180,10 +183,21 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         }
         if (data == null) return;
         String scheme = data.getScheme() == null ? "" : data.getScheme();
+        int generation = ++intentGeneration;
         MediaItem item;
         if (scheme.equals("content")) {
-            String path = resolvePath(data);
-            item = path != null ? MediaItem.file(new File(path)) : new MediaItem(data.toString(), displayName(data), MediaItem.LOCAL, "", null, 0);
+            // Resolve the provider off the UI thread, then queue the item as before.
+            Uri uri = data;
+            pendingQueue = null; // superseded by this intent
+            io.execute(() -> {
+                String path = resolvePath(uri);
+                MediaItem resolved = path != null ? MediaItem.file(new File(path))
+                        : new MediaItem(uri.toString(), displayName(uri), MediaItem.LOCAL, "", null, 0);
+                main.post(() -> {
+                    if (generation == intentGeneration && !isDestroyed()) playResolved(resolved);
+                });
+            });
+            return;
         } else if (scheme.equals("file")) {
             item = MediaItem.file(new File(data.getPath()));
         } else {
@@ -192,6 +206,17 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         }
         pendingQueue = Collections.singletonList(item);
         pendingIndex = 0;
+    }
+
+    /** Main thread: queues an item resolved in the background, or plays it when bound. */
+    private void playResolved(MediaItem item) {
+        pendingQueue = Collections.singletonList(item);
+        pendingIndex = 0;
+        if (service != null) {
+            if (!attached) service.expectView();
+            service.playQueue(pendingQueue, pendingIndex);
+            pendingQueue = null;
+        }
     }
 
     private String displayName(Uri uri) {
@@ -420,6 +445,7 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
             service.removeListener(this);
         }
         unbindService(connection);
+        io.shutdown();
         super.onDestroy();
     }
 
@@ -993,22 +1019,31 @@ public class PlayerActivity extends Activity implements PlaybackService.Listener
         if (requestCode == REQ_SUBTITLE && resultCode == RESULT_OK && data != null && data.getData() != null && service != null) {
             Uri uri = data.getData();
             // libVLC reads content:// subtitles poorly; copy to cache with the right extension.
-            try {
-                String name = displayName(uri);
-                if (name == null) name = "subtitle.srt";
-                File out = new File(getCacheDir(), "subs/" + System.currentTimeMillis() + "_" + name.replaceAll("[^\\w.\\-]", "_"));
-                out.getParentFile().mkdirs();
-                try (java.io.InputStream in = getContentResolver().openInputStream(uri);
-                     java.io.FileOutputStream fo = new java.io.FileOutputStream(out)) {
-                    byte[] buf = new byte[16384];
-                    int n;
-                    while ((n = in.read(buf)) > 0) fo.write(buf, 0, n);
+            // The provider query and copy run in the background (Drive/USB can take seconds).
+            io.execute(() -> {
+                try {
+                    String found = displayName(uri);
+                    String name = found == null ? "subtitle.srt" : found;
+                    File out = new File(getCacheDir(), "subs/" + System.currentTimeMillis() + "_" + name.replaceAll("[^\\w.\\-]", "_"));
+                    out.getParentFile().mkdirs();
+                    try (java.io.InputStream in = getContentResolver().openInputStream(uri);
+                         java.io.FileOutputStream fo = new java.io.FileOutputStream(out)) {
+                        byte[] buf = new byte[16384];
+                        int n;
+                        while ((n = in.read(buf)) > 0) fo.write(buf, 0, n);
+                    }
+                    SubtitleCharset.convertInPlace(out);
+                    main.post(() -> {
+                        if (isDestroyed() || service == null) return;
+                        boolean ok = service.player().addSlave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Subtitle, Uri.fromFile(out), true);
+                        info(ok ? "Subtitle loaded: " + name : "Could not load " + name);
+                    });
+                } catch (Exception e) {
+                    main.post(() -> {
+                        if (!isDestroyed()) info("Could not read the subtitle file");
+                    });
                 }
-                boolean ok = service.player().addSlave(org.videolan.libvlc.interfaces.IMedia.Slave.Type.Subtitle, Uri.fromFile(out), true);
-                info(ok ? "Subtitle loaded: " + name : "Could not load " + name);
-            } catch (Exception e) {
-                info("Could not read the subtitle file");
-            }
+            });
         }
     }
 
